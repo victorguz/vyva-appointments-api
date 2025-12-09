@@ -1,0 +1,101 @@
+service: vyva-appointments
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: ${opt:stage, 'qas'} # Default: qas (dev es solo local)
+  region: us-east-1
+  memorySize: 512
+  timeout: 30
+
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    # Parámetros compartidos desde SSM
+    ACCESS_KEY_ID: ${ssm:/vyva/${self:provider.stage}/VYVA_ACCESS_KEY_ID}
+    SECRET_ACCESS_KEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SECRET_ACCESS_KEY}
+    REGION: ${ssm:/vyva/${self:provider.stage}/VYVA_REGION}
+    # Parámetros necesarios para autenticación
+    JWT_SECRET: ${ssm:/vyva/${self:provider.stage}/VYVA_JWT_SECRET}
+    SECRET_KEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SECRET_KEY}
+
+  iam:
+    role:
+      statements:
+        # Permisos para leer parámetros SSM
+        - Effect: Allow
+          Action:
+            - ssm:GetParameter
+            - ssm:GetParameters
+            - ssm:GetParametersByPath
+          Resource:
+            - arn:aws:ssm:${self:provider.region}:*:parameter/vyva/${self:provider.stage}/*
+
+        # Permisos para DynamoDB (appointments, customers, users, products, sales-orders)
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:BatchGetItem
+            - dynamodb:BatchWriteItem
+          Resource:
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-appointments
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-appointments/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-customers
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-customers/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders/*
+
+        # Permisos para logs de CloudWatch
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource:
+            - arn:aws:logs:${self:provider.region}:*:*
+
+functions:
+  api:
+    handler: dist/lambda.handler
+    layers:
+      - arn:aws:lambda:us-east-1:754881596744:layer:vyva-auth:1
+    events:
+      - http:
+          path: /api/appointments
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+            allowCredentials: true
+      - http:
+          path: /api/appointments/{proxy+}
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+            allowCredentials: true
+
+package:
+  patterns:
+    - '!node_modules/**'
+    - '!src/**'
+    - '!*.md'
+    - '!*.json'
+    - '!*.ts'
+    - '!*.tsbuildinfo'
+    - 'dist/**'
+    - 'package.json'
+    - 'package-lock.json'

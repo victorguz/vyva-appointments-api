@@ -1,0 +1,22 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { DynamooseModule } from 'nestjs-dynamoose';
+import { configModuleOptions } from './core/config/environment.config';
+import { dynamooseConfig } from './core/config/dynamoose.config';
+import { AppointmentsModule } from './modules/appointments/appointments.module';
+import { SharedModule } from './shared/shared.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot(configModuleOptions),
+    DynamooseModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) =>
+        dynamooseConfig(configService),
+      inject: [ConfigService],
+    }),
+    SharedModule,
+    AppointmentsModule,
+  ],
+})
+export class AppModule {}
