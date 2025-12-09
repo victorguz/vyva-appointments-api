@@ -6,62 +6,76 @@ import {
 import { GenericResponse } from '../core/interfaces/generic-response.interface';
 import { isProduction } from '../core/config/environment.config';
 
-export function handleError(error: any, httpStatus?: HttpStatus) {
+export function handleError(error: any, httpStatus?: HttpStatus): HttpException {
   const logger = new Logger(handleError.name);
 
+  let code: string = 'MS027';
+  let message: string = ERROR_MESSAGES.MS027;
+  let status: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
+  let handledError = false;
+
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    (error as any).response?.handledError === true
+  ) {
+    const resp = (error as any).response;
+    code = typeof resp.code === 'string' ? resp.code : code;
+    message = typeof resp.message === 'string' ? resp.message : message;
+    status = typeof resp.status === 'number' ? resp.status : status;
+    handledError = true;
+  } else if (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as { message?: unknown }).message === 'string'
+  ) {
+    const msg = (error as { message: string }).message;
+    const found = HANDLED_ERRORS.find((val) => msg.includes(val.keyword));
+    if (found) {
+      code = found.code;
+      message = ERROR_MESSAGES[found.code];
+      status = found.status;
+      handledError = true;
+    } else if ((ERROR_MESSAGES as any)[msg]) {
+      code = msg;
+      message = (ERROR_MESSAGES as any)[msg];
+      status = httpStatus ?? HttpStatus.BAD_REQUEST;
+      handledError = true;
+    } else {
+      message = msg;
+      status = httpStatus ?? HttpStatus.BAD_REQUEST;
+    }
+  } else if (typeof error === 'string') {
+    const found = HANDLED_ERRORS.find((val) => error.includes(val.keyword));
+    if (found) {
+      code = found.code;
+      message = ERROR_MESSAGES[found.code];
+      status = found.status;
+      handledError = true;
+    } else if ((ERROR_MESSAGES as any)[error]) {
+      code = error;
+      message = (ERROR_MESSAGES as any)[error];
+      status = httpStatus ?? HttpStatus.BAD_REQUEST;
+      handledError = true;
+    } else {
+      message = error;
+      status = httpStatus ?? HttpStatus.BAD_REQUEST;
+    }
+  }
+
   if (!isProduction) {
-    const message = (ERROR_MESSAGES as any)[error.message];
-    logger.error('Handled Error: ' + (message ?? error.message), error.stack);
+    logger.error(`Handled Error: ${message}`, (error as any)?.stack);
   }
-  if (error.response?.handledError == true) {
-    return new HttpException(error.response, error.response.status);
-  } else if (error.message) {
-    return findHandledError(error.message, httpStatus);
-  } else if (typeof error == 'string') {
-    return findHandledError(error, httpStatus ?? HttpStatus.BAD_REQUEST);
-  }
-}
 
-export function findHandledError(
-  error: string,
-  httpStatus: HttpStatus,
-): HttpException {
-  const message = (ERROR_MESSAGES as any)[error];
-  if (message) {
-    return new HttpException(
-      new GenericResponse<any>(undefined, false, message, true, error),
-      httpStatus ?? HttpStatus.BAD_REQUEST,
-    );
-  }
-  const find = HANDLED_ERRORS.find((val) => error.includes(val.keyword));
-  if (find) {
-    return new HttpException(
-      new GenericResponse<any>(
-        undefined,
-        false,
-        ERROR_MESSAGES[find.code],
-        true,
-        find.code,
-        find.status,
-      ),
-      httpStatus ?? find.status,
-    );
-  } else {
-    return new HttpException(
-      new GenericResponse<any>(
-        undefined,
-        false,
-        ERROR_MESSAGES.MS027,
-        false,
-        'MS027',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      ),
-      500,
-    );
-  }
-}
-
-export function findHandledErrorMessage(error: string): string {
-  const find = HANDLED_ERRORS.find((val) => val.keyword == error);
-  return find ? ERROR_MESSAGES[find.code] : error;
+  const response = new GenericResponse<any>(
+    undefined,
+    false,
+    message,
+    handledError,
+    code,
+    status
+  );
+  return new HttpException(response, status);
 }

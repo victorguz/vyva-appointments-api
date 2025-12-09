@@ -89,13 +89,7 @@ functions:
             allowCredentials: true
 
 package:
+  excludeDevDependencies: true
   patterns:
-    - '!node_modules/**'
-    - '!src/**'
-    - '!*.md'
-    - '!*.json'
-    - '!*.ts'
-    - '!*.tsbuildinfo'
+    - '!**'
     - 'dist/**'
-    - 'package.json'
-    - 'package-lock.json'
