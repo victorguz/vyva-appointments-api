@@ -54,6 +54,11 @@ export class CreateAppointmentDto {
   @IsEnum(AppointmentStatus)
   @IsOptional()
   status?: AppointmentStatus;
+
+  @ApiProperty({ description: 'Business Info ID (for public appointments)' })
+  @IsString()
+  @IsOptional()
+  businessInfoId?: string;
 }
 
 export class UpdateAppointmentDto {

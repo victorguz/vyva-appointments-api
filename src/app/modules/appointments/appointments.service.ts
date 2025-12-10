@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
-import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
+import { AppointmentStatus, SalesOrderStatus } from 'src/app/core/constants/domain.constants';
+import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
+import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { SalesOrder, SalesOrderKey } from 'src/app/schemas/sales-order.schema';
 import { User } from 'src/app/schemas/user.schema';
 import { v4 as uuidv4 } from 'uuid';
@@ -23,44 +25,61 @@ export class AppointmentsService extends TransactionSupport {
     private readonly model: Model<Appointment, AppointmentKey>,
     @InjectModel('SalesOrder')
     private readonly salesOrderModel: Model<SalesOrder, SalesOrderKey>,
-    @InjectModel('Product')
-    private readonly productModel: Model<any, any>,
     @InjectModel('Customer')
-    private readonly customerModel: Model<any, any>,
-    @InjectModel('User')
-    private readonly userModel: Model<any, any>,
+    private readonly customerModel: Model<Customer, CustomerKey>,
+    @InjectModel('Product')
+    private readonly productModel: Model<Product, ProductKey>,
   ) {
     super();
   }
 
-  private generateOrderNumber(): string {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substring(2, 7);
-    return `ORD-${timestamp}-${random}`.toUpperCase();
-  }
-
-  async create(
+  async createPublic(
     body: CreateAppointmentDto,
-    user: User,
   ): Promise<GenericResponse<Appointment>> {
     try {
+      if (!body.businessInfoId) {
+        throw new Error('MS014'); // BusinessInfoId is required
+      }
+
       const transactions = [];
-      
-      // Crear orden de venta simplificada
+
+      // Create sales order manually for public appointments
       const orderNumber = this.generateOrderNumber();
-      const paidAmount = body.paymentMethods?.reduce((sum, pm) => sum + (pm.amount || 0), 0) || 0;
-      
+      const product = await this.productModel.get({ id: body.idService });
+      if (!product) {
+        throw new Error('MS007');
+      }
+      const productData = product.toJSON() as Product;
+      const totalAmount = productData.offerPrice ?? productData.price ?? 0;
+      const paidAmount = body.paymentMethods.reduce(
+        (sum, pm) => sum + pm.value,
+        0,
+      );
+
       const salesOrder: SalesOrder = {
         id: uuidv4(),
         orderNumber,
         idCustomer: body.idCustomer,
-        products: [{ id: body.idService, quantity: 1, isService: true, price: 0 }],
-        paymentMethods: body.paymentMethods || [],
+        products: [
+          {
+            id: body.idService,
+            quantity: 1,
+            isService: true,
+            price: totalAmount,
+          },
+        ],
+        paymentMethods: body.paymentMethods,
         paidAmount,
-        totalAmount: 0,
-        status: paidAmount === 0 ? 'pending' : 'paid',
-        businessInfoId: user.businessInfoId,
-      } as any;
+        totalAmount,
+        status:
+          paidAmount === 0
+            ? SalesOrderStatus.pending
+            : paidAmount === totalAmount
+            ? SalesOrderStatus.paid
+            : SalesOrderStatus.partiallyPaid,
+        businessInfoId: body.businessInfoId,
+        createdBy: undefined,
+      };
 
       const salesTransaction =
         this.salesOrderModel.transaction.create(salesOrder);
@@ -77,7 +96,69 @@ export class AppointmentsService extends TransactionSupport {
           idService: body.idService,
           idCustomer: body.idCustomer,
           idEmployee: body.idEmployee,
+          idOrder: body.idOrder,
+          status: AppointmentStatus.pending,
+          businessInfoId: body.businessInfoId,
+          createdBy: undefined,
+        };
+
+        const cleanedPayload = deleteEmptyProperties(appointment);
+
+        const appointmentTransaction = this.model.transaction.create({
+          ...cleanedPayload,
           idOrder: salesOrder.id,
+        });
+
+        transactions.push(appointmentTransaction);
+      }
+
+      await this.transaction([...transactions]);
+
+      const appointmentResult = await this.model.get({ id: appointment.id });
+      return new GenericResponse(appointmentResult);
+    } catch (error) {
+      throw handleError(error);
+    }
+  }
+
+  private generateOrderNumber(): string {
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 1000);
+    return `ORD-${timestamp}-${random}`;
+  }
+
+  async create(
+    body: CreateAppointmentDto,
+    user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    try {
+      const transactions = [];
+      const salesOrder = await this.createOrderObject(
+        {
+          products: [
+            { id: body.idService, quantity: 1, isService: true, price: 0 },
+          ],
+          paymentMethods: body.paymentMethods,
+          idCustomer: body.idCustomer,
+        },
+        user,
+      );
+      const salesTransaction =
+        this.salesOrderModel.transaction.create(salesOrder);
+      transactions.push(salesTransaction);
+
+      let appointment = null;
+      if (body.startDate && body.endDate) {
+        this.validateAppointmentDates(body.startDate, body.endDate);
+
+        appointment = {
+          id: uuidv4(),
+          startDate: new Date(body.startDate).getTime() as any,
+          endDate: new Date(body.endDate).getTime() as any,
+          idService: body.idService,
+          idCustomer: body.idCustomer,
+          idEmployee: body.idEmployee,
+          idOrder: body.idOrder,
           status: AppointmentStatus.pending,
           businessInfoId: user.businessInfoId,
           createdBy: user.id,
@@ -85,7 +166,10 @@ export class AppointmentsService extends TransactionSupport {
 
         const cleanedPayload = deleteEmptyProperties(appointment);
 
-        const appointmentTransaction = this.model.transaction.create(cleanedPayload);
+        const appointmentTransaction = this.model.transaction.create({
+          ...cleanedPayload,
+          idOrder: salesOrder.id,
+        });
 
         transactions.push(appointmentTransaction);
       }
@@ -95,6 +179,116 @@ export class AppointmentsService extends TransactionSupport {
       const appointmentResult = await this.model.get({ id: appointment.id });
 
       return new GenericResponse(appointmentResult);
+    } catch (error) {
+      throw handleError(error);
+    }
+  }
+
+  private async createOrderObject(
+    body: { products: any[]; paymentMethods: any[]; idCustomer?: string },
+    user: User,
+  ): Promise<SalesOrder> {
+    const orderNumber = this.generateOrderNumber();
+
+    // Fetch products from database to get accurate prices
+    const productIds = body.products.map((product) => product.id);
+    const productDetailsArray: Product[] = await this.productModel
+      .scan('id')
+      .in(productIds)
+      .where('businessInfoId')
+      .eq(user.businessInfoId)
+      .exec();
+
+    if (
+      !productDetailsArray ||
+      productDetailsArray.length !== productIds.length
+    ) {
+      throw new Error('MS007');
+    }
+
+    const productDetails = productDetailsArray.map((product) => ({
+      id: product.id,
+      quantity: body.products.find((p) => p.id === product.id)?.quantity ?? 0,
+      isService: product.isService,
+      price: product.price,
+      offerPrice: product.offerPrice,
+    }));
+
+    // Calculate total amount from database product prices
+    const totalAmount = productDetails.reduce(
+      (total, orderProduct) =>
+        total + orderProduct.price * orderProduct.quantity,
+      0,
+    );
+    const paidAmount = body.paymentMethods.reduce(
+      (acc, item) => acc + item.value,
+      0,
+    );
+    const salesOrder: SalesOrder = {
+      id: uuidv4(),
+      orderNumber,
+      idCustomer: body.idCustomer,
+      products: productDetails,
+      paymentMethods: body.paymentMethods,
+      paidAmount,
+      totalAmount,
+      status:
+        paidAmount === 0
+          ? SalesOrderStatus.pending
+          : paidAmount === totalAmount
+          ? SalesOrderStatus.paid
+          : SalesOrderStatus.partiallyPaid,
+      businessInfoId: user.businessInfoId,
+      createdBy: user.id,
+    };
+    return salesOrder;
+  }
+
+  async findAllPublic(
+    businessId: string,
+    filters?: ListAppointmentDto,
+  ): Promise<GenericResponse<Appointment[]>> {
+    try {
+      // Validate businessId
+      if (!businessId) {
+        throw new Error('MS014');
+      }
+
+      let query = this.model.scan();
+
+      // Apply filters
+      if (filters?.idCustomer) {
+        query = query.where('idCustomer').eq(filters.idCustomer);
+      }
+
+      if (filters?.idEmployee) {
+        query = query.where('idEmployee').eq(filters.idEmployee);
+      }
+
+      if (filters?.idOrder) {
+        query = query.where('idOrder').eq(filters.idOrder);
+      }
+
+      if (filters?.status) {
+        query = query.where('status').eq(filters.status);
+      }
+
+      // Always filter by business
+      query = query.where('businessInfoId').eq(businessId);
+
+      // Apply date range filters
+      if (filters?.startDate) {
+        query = query.where('startDate').ge(new Date(filters.startDate) as any);
+      }
+
+      if (filters?.endDate) {
+        query = query.where('endDate').le(new Date(filters.endDate) as any);
+      }
+
+      const appointments = (await query.exec()).map(
+        (appointment) => appointment as Appointment,
+      );
+      return new GenericResponse(appointments);
     } catch (error) {
       throw handleError(error);
     }
@@ -206,20 +400,21 @@ export class AppointmentsService extends TransactionSupport {
 
         if (!orderId) {
           // Create new order if none exists
-          const orderNumber = this.generateOrderNumber();
-          const paidAmount = paymentMethods.reduce((sum: number, pm: any) => sum + (pm.amount || 0), 0);
-          
-          const newOrder: SalesOrder = {
-            id: uuidv4(),
-            orderNumber,
-            idCustomer: appointment.idCustomer || '',
-            products: [{ id: appointment.idService, quantity: 1, isService: true, price: 0 }],
-            paymentMethods: paymentMethods,
-            paidAmount,
-            totalAmount: 0,
-            status: paidAmount === 0 ? 'pending' : 'paid',
-            businessInfoId: user.businessInfoId,
-          } as any;
+          const newOrder = await this.createOrderObject(
+            {
+              products: [
+                {
+                  id: appointment.idService,
+                  quantity: 1,
+                  isService: true,
+                  price: 0,
+                },
+              ],
+              paymentMethods: paymentMethods,
+              idCustomer: appointment.idCustomer || '',
+            },
+            user,
+          );
 
           const orderCreateTx =
             this.salesOrderModel.transaction.create(newOrder);

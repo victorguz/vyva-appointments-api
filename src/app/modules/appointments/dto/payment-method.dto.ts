@@ -11,7 +11,7 @@ export class SalesOrderPaymentMethodDto {
   @ApiProperty({ description: 'Payment amount' })
   @IsNumber()
   @IsNotEmpty()
-  amount: number;
+  value: number;
 
   @ApiProperty({ description: 'Payment reference/transaction ID', required: false })
   @IsString()

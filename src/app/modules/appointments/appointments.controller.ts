@@ -6,6 +6,7 @@ import { Appointment } from '../../schemas/appointment.schema';
 import { User } from '../../schemas/user.schema';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthGuard } from '../auth/guards/auth.guard';
+import { BusinessIdGuard } from '../auth/guards/businessId.guard';
 import { AppointmentsService } from './appointments.service';
 import {
   CreateAppointmentDto,
@@ -19,14 +20,41 @@ import {
 export class AppointmentsController {
   constructor(private readonly appointmentsService: AppointmentsService) {}
 
+  @Get('public/:businessId')
+  @ApiOperation({ summary: 'Get all appointments for a business (public)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Return all appointments for the business.',
+    type: GenericResponse<[Appointment]>,
+  })
+  async findAllPublic(
+    @Param('businessId') businessId: string,
+    @Query() filters: ListAppointmentDto,
+  ): Promise<GenericResponse<Appointment[]>> {
+    return this.appointmentsService.findAllPublic(businessId, filters);
+  }
+
+  @Post('public')
+  @ApiOperation({ summary: 'Create a new appointment (public)' })
+  @ApiResponse({
+    status: 201,
+    description: 'The appointment has been successfully created.',
+    type: GenericResponse<Appointment>,
+  })
+  async createPublic(
+    @Body() createAppointmentDto: CreateAppointmentDto,
+  ): Promise<GenericResponse<Appointment>> {
+    return this.appointmentsService.createPublic(createAppointmentDto);
+  }
+
   @Post()
+  @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Create a new appointment' })
   @ApiResponse({
     status: 201,
     description: 'The appointment has been successfully created.',
     type: GenericResponse<Appointment>,
   })
-  @UseGuards(AuthGuard)
   async create(
     @Body() createAppointmentDto: CreateAppointmentDto,
     @CurrentUser() user: User,
@@ -35,13 +63,13 @@ export class AppointmentsController {
   }
 
   @Get()
+  @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Get all appointments with optional filters' })
   @ApiResponse({
     status: 200,
     description: 'Return all appointments.',
     type: GenericResponse<[Appointment]>,
   })
-  @UseGuards(AuthGuard)
   async findAll(
     @Query() filters: ListAppointmentDto,
     @CurrentUser() user: User,
@@ -50,13 +78,13 @@ export class AppointmentsController {
   }
 
   @Put(':id')
+  @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Update an appointment' })
   @ApiResponse({
     status: 200,
     description: 'The appointment has been successfully updated.',
     type: GenericResponse<Appointment>,
   })
-  @UseGuards(AuthGuard)
   async update(
     @Param('id') id: string,
     @Body() updateAppointmentDto: UpdateAppointmentDto,
@@ -69,13 +97,13 @@ export class AppointmentsController {
   }
 
   @Patch(':id')
+  @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Update appointment status' })
   @ApiResponse({
     status: 200,
     description: 'The appointment status has been successfully updated.',
     type: GenericResponse<Appointment>,
   })
-  @UseGuards(AuthGuard)
   async updateStatus(
     @Param('id') id: string,
     @Body() updateStatusDto: UpdateAppointmentStatusDto,
@@ -88,13 +116,13 @@ export class AppointmentsController {
   }
 
   @Delete(':id')
+  @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Delete an appointment' })
   @ApiResponse({
     status: 200,
     description: 'The appointment has been successfully deleted.',
     type: GenericResponse<boolean>,
   })
-  @UseGuards(AuthGuard)
   async remove(@Param('id') id: string): Promise<GenericResponse<boolean>> {
     return this.appointmentsService.remove(id);
   }

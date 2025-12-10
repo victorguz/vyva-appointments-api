@@ -7,7 +7,6 @@ import { AppointmentsService } from './appointments.service';
 import { SalesOrderSchema } from 'src/app/schemas/sales-order.schema';
 import { ProductSchema } from 'src/app/schemas/product.schema';
 import { CustomerSchema } from 'src/app/schemas/customer.schema';
-import { UserSchema } from 'src/app/schemas/user.schema';
 
 @Module({
   imports: [
@@ -39,13 +38,6 @@ import { UserSchema } from 'src/app/schemas/user.schema';
         schema: CustomerSchema,
         options: {
           tableName: 'customers',
-        },
-      },
-      {
-        name: 'User',
-        schema: UserSchema,
-        options: {
-          tableName: 'users',
         },
       },
     ]),
