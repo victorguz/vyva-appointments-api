@@ -11,6 +11,7 @@ export interface SalesOrderItem {
   id: string;
   quantity: number;
   isSubscription?: boolean;
+  isService?: boolean;
   price: number;
   offerPrice?: number;
 }
@@ -26,6 +27,7 @@ export interface SalesOrder extends SalesOrderKey {
   products: SalesOrderItem[];
   paymentMethods: SalesOrderPaymentMethod[];
   totalAmount: number;
+  paidAmount: number;
   status: string;
   businessInfoId?: string;
   createdBy?: string;

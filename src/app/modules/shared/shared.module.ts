@@ -4,12 +4,12 @@ import { JwtModule } from '@nestjs/jwt';
 import { DynamooseModule } from 'nestjs-dynamoose';
 import { AppointmentSchema } from 'src/app/schemas/appointment.schema';
 import { ProductSchema } from 'src/app/schemas/product.schema';
-import { SalesOrderSchema } from 'src/app/schemas/sales-order.schema';
 
 import { JWT_EXPIRATION } from '../../core/config/environment.config';
 import { CustomerSchema } from '../../schemas/customer.schema';
 import { UserSchema } from '../../schemas/user.schema';
 import { AuthGuard } from '../auth/guards/auth.guard';
+import { LambdaInvokeService } from './lambda-invoke.service';
 
 @Module({
   imports: [
@@ -63,19 +63,11 @@ import { AuthGuard } from '../auth/guards/auth.guard';
           },
         },
       },
-
       {
         name: 'Appointment',
         schema: AppointmentSchema,
         options: {
           tableName: 'appointments',
-        },
-      },
-      {
-        name: 'SalesOrder',
-        schema: SalesOrderSchema,
-        options: {
-          tableName: 'sales-orders',
         },
       },
       {
@@ -87,7 +79,7 @@ import { AuthGuard } from '../auth/guards/auth.guard';
       },
     ]),
   ],
-  providers: [AuthGuard],
-  exports: [AuthGuard, JwtModule, DynamooseModule],
+  providers: [AuthGuard, LambdaInvokeService],
+  exports: [AuthGuard, JwtModule, DynamooseModule, LambdaInvokeService],
 })
 export class SharedModule {}

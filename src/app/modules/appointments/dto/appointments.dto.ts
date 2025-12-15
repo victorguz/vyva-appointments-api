@@ -37,14 +37,15 @@ export class CreateAppointmentDto {
   idOrder: string;
 
   @ApiProperty({
-    description: 'Payment methods for the order',
+    description: 'Payment methods for the order (handled in frontend after appointment creation)',
     type: [SalesOrderPaymentMethodDto],
+    required: false,
   })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SalesOrderPaymentMethodDto)
-  @IsNotEmpty()
-  paymentMethods: SalesOrderPaymentMethodDto[];
+  @IsOptional()
+  paymentMethods?: SalesOrderPaymentMethodDto[];
 
   @ApiProperty({
     description: 'Appointment status',

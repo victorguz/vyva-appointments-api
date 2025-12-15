@@ -6,7 +6,10 @@ import {
 import { GenericResponse } from '../core/interfaces/generic-response.interface';
 import { isProduction } from '../core/config/environment.config';
 
-export function handleError(error: any, httpStatus?: HttpStatus): HttpException {
+export function handleError(
+  error: any,
+  httpStatus?: HttpStatus,
+): HttpException {
   const logger = new Logger(handleError.name);
 
   let code: string = 'MS027';
@@ -43,10 +46,8 @@ export function handleError(error: any, httpStatus?: HttpStatus): HttpException 
       message = (ERROR_MESSAGES as any)[msg];
       status = httpStatus ?? HttpStatus.BAD_REQUEST;
       handledError = true;
-    } else {
-      message = msg;
-      status = httpStatus ?? HttpStatus.BAD_REQUEST;
     }
+    // Si no está manejado, se mantiene MS027 por defecto
   } else if (typeof error === 'string') {
     const found = HANDLED_ERRORS.find((val) => error.includes(val.keyword));
     if (found) {
@@ -59,14 +60,24 @@ export function handleError(error: any, httpStatus?: HttpStatus): HttpException 
       message = (ERROR_MESSAGES as any)[error];
       status = httpStatus ?? HttpStatus.BAD_REQUEST;
       handledError = true;
-    } else {
-      message = error;
-      status = httpStatus ?? HttpStatus.BAD_REQUEST;
     }
+    // Si no está manejado, se mantiene MS027 por defecto
   }
 
+  // Log del error real solo en desarrollo, pero nunca se expone al cliente
   if (!isProduction) {
-    logger.error(`Handled Error: ${message}`, (error as any)?.stack);
+    const errorMessage =
+      typeof error === 'string'
+        ? error
+        : (error as any)?.message || JSON.stringify(error);
+    logger.error(`Error no manejado: ${errorMessage}`, (error as any)?.stack);
+  }
+
+  // Si el error no fue manejado, siempre usar MS027
+  if (!handledError) {
+    code = 'MS027';
+    message = ERROR_MESSAGES.MS027;
+    status = HttpStatus.INTERNAL_SERVER_ERROR;
   }
 
   const response = new GenericResponse<any>(
@@ -75,7 +86,7 @@ export function handleError(error: any, httpStatus?: HttpStatus): HttpException 
     message,
     handledError,
     code,
-    status
+    status,
   );
   return new HttpException(response, status);
 }

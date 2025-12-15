@@ -1,9 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
-import { AppointmentStatus, SalesOrderStatus } from 'src/app/core/constants/domain.constants';
+import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
 import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
 import { Product, ProductKey } from 'src/app/schemas/product.schema';
-import { SalesOrder, SalesOrderKey } from 'src/app/schemas/sales-order.schema';
 import { User } from 'src/app/schemas/user.schema';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -11,6 +10,10 @@ import { GenericResponse } from '../../core/interfaces/generic-response.interfac
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { handleError } from '../../shared/error.functions';
 import { deleteEmptyProperties } from '../../shared/shared.functions';
+import { CustomersService } from '../customers/customers.service';
+import { ProductsService } from '../products/products.service';
+import { UsersService } from '../users/users.service';
+import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import {
   CreateAppointmentDto,
   ListAppointmentDto,
@@ -21,10 +24,12 @@ import {
 @Injectable()
 export class AppointmentsService extends TransactionSupport {
   constructor(
+    private readonly lambdaInvokeService: LambdaInvokeService,
+    private readonly customersService: CustomersService,
+    private readonly productsService: ProductsService,
+    private readonly usersService: UsersService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
-    @InjectModel('SalesOrder')
-    private readonly salesOrderModel: Model<SalesOrder, SalesOrderKey>,
     @InjectModel('Customer')
     private readonly customerModel: Model<Customer, CustomerKey>,
     @InjectModel('Product')
@@ -41,90 +46,41 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS014'); // BusinessInfoId is required
       }
 
-      const transactions = [];
-
-      // Create sales order manually for public appointments
-      const orderNumber = this.generateOrderNumber();
-      const product = await this.productModel.get({ id: body.idService });
-      if (!product) {
-        throw new Error('MS007');
+      if (!body.startDate || !body.endDate) {
+        throw new Error('MS014'); // Start and end dates are required
       }
-      const productData = product.toJSON() as Product;
-      const totalAmount = productData.offerPrice ?? productData.price ?? 0;
-      const paidAmount = body.paymentMethods.reduce(
-        (sum, pm) => sum + pm.value,
-        0,
-      );
 
-      const salesOrder: SalesOrder = {
+      this.validateAppointmentDates(body.startDate, body.endDate);
+
+      const appointment = {
         id: uuidv4(),
-        orderNumber,
+        startDate: new Date(body.startDate).getTime() as any,
+        endDate: new Date(body.endDate).getTime() as any,
+        idService: body.idService,
         idCustomer: body.idCustomer,
-        products: [
-          {
-            id: body.idService,
-            quantity: 1,
-            isService: true,
-            price: totalAmount,
-          },
-        ],
-        paymentMethods: body.paymentMethods,
-        paidAmount,
-        totalAmount,
-        status:
-          paidAmount === 0
-            ? SalesOrderStatus.pending
-            : paidAmount === totalAmount
-            ? SalesOrderStatus.paid
-            : SalesOrderStatus.partiallyPaid,
+        idEmployee: body.idEmployee,
+        status: AppointmentStatus.pending,
         businessInfoId: body.businessInfoId,
-        createdBy: undefined,
+        createdBy: undefined as any,
       };
 
-      const salesTransaction =
-        this.salesOrderModel.transaction.create(salesOrder);
-      transactions.push(salesTransaction);
+      const cleanedPayload = deleteEmptyProperties(appointment);
 
-      let appointment = null;
-      if (body.startDate && body.endDate) {
-        this.validateAppointmentDates(body.startDate, body.endDate);
-
-        appointment = {
-          id: uuidv4(),
-          startDate: new Date(body.startDate).getTime() as any,
-          endDate: new Date(body.endDate).getTime() as any,
-          idService: body.idService,
-          idCustomer: body.idCustomer,
-          idEmployee: body.idEmployee,
-          idOrder: body.idOrder,
-          status: AppointmentStatus.pending,
-          businessInfoId: body.businessInfoId,
-          createdBy: undefined,
-        };
-
-        const cleanedPayload = deleteEmptyProperties(appointment);
-
-        const appointmentTransaction = this.model.transaction.create({
-          ...cleanedPayload,
-          idOrder: salesOrder.id,
-        });
-
-        transactions.push(appointmentTransaction);
-      }
-
-      await this.transaction([...transactions]);
+      await this.model.create(cleanedPayload);
 
       const appointmentResult = await this.model.get({ id: appointment.id });
-      return new GenericResponse(appointmentResult);
+      const appointmentData = appointmentResult.toJSON() as Appointment;
+
+      // Invoke Lambda to sync with Google Calendar asynchronously
+      await this.lambdaInvokeService.invokeGoogleCalendarSync(
+        appointmentData,
+        'create',
+      );
+
+      return new GenericResponse(appointmentData);
     } catch (error) {
       throw handleError(error);
     }
-  }
-
-  private generateOrderNumber(): string {
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 1000);
-    return `ORD-${timestamp}-${random}`;
   }
 
   async create(
@@ -132,116 +88,41 @@ export class AppointmentsService extends TransactionSupport {
     user: User,
   ): Promise<GenericResponse<Appointment>> {
     try {
-      const transactions = [];
-      const salesOrder = await this.createOrderObject(
-        {
-          products: [
-            { id: body.idService, quantity: 1, isService: true, price: 0 },
-          ],
-          paymentMethods: body.paymentMethods,
-          idCustomer: body.idCustomer,
-        },
-        user,
-      );
-      const salesTransaction =
-        this.salesOrderModel.transaction.create(salesOrder);
-      transactions.push(salesTransaction);
-
-      let appointment = null;
-      if (body.startDate && body.endDate) {
-        this.validateAppointmentDates(body.startDate, body.endDate);
-
-        appointment = {
-          id: uuidv4(),
-          startDate: new Date(body.startDate).getTime() as any,
-          endDate: new Date(body.endDate).getTime() as any,
-          idService: body.idService,
-          idCustomer: body.idCustomer,
-          idEmployee: body.idEmployee,
-          idOrder: body.idOrder,
-          status: AppointmentStatus.pending,
-          businessInfoId: user.businessInfoId,
-          createdBy: user.id,
-        };
-
-        const cleanedPayload = deleteEmptyProperties(appointment);
-
-        const appointmentTransaction = this.model.transaction.create({
-          ...cleanedPayload,
-          idOrder: salesOrder.id,
-        });
-
-        transactions.push(appointmentTransaction);
+      if (!body.startDate || !body.endDate) {
+        throw new Error('MS014'); // Start and end dates are required
       }
 
-      await this.transaction([...transactions]);
+      this.validateAppointmentDates(body.startDate, body.endDate);
+
+      const appointment = {
+        id: uuidv4(),
+        startDate: new Date(body.startDate).getTime() as any,
+        endDate: new Date(body.endDate).getTime() as any,
+        idService: body.idService,
+        idCustomer: body.idCustomer,
+        idEmployee: body.idEmployee,
+        status: AppointmentStatus.pending,
+        businessInfoId: user.businessInfoId,
+        createdBy: user.id,
+      };
+
+      const cleanedPayload = deleteEmptyProperties(appointment);
+
+      await this.model.create(cleanedPayload);
 
       const appointmentResult = await this.model.get({ id: appointment.id });
+      const appointmentData = appointmentResult.toJSON() as Appointment;
 
-      return new GenericResponse(appointmentResult);
+      // Invoke Lambda to sync with Google Calendar asynchronously
+      await this.lambdaInvokeService.invokeGoogleCalendarSync(
+        appointmentData,
+        'create',
+      );
+
+      return new GenericResponse(appointmentData);
     } catch (error) {
       throw handleError(error);
     }
-  }
-
-  private async createOrderObject(
-    body: { products: any[]; paymentMethods: any[]; idCustomer?: string },
-    user: User,
-  ): Promise<SalesOrder> {
-    const orderNumber = this.generateOrderNumber();
-
-    // Fetch products from database to get accurate prices
-    const productIds = body.products.map((product) => product.id);
-    const productDetailsArray: Product[] = await this.productModel
-      .scan('id')
-      .in(productIds)
-      .where('businessInfoId')
-      .eq(user.businessInfoId)
-      .exec();
-
-    if (
-      !productDetailsArray ||
-      productDetailsArray.length !== productIds.length
-    ) {
-      throw new Error('MS007');
-    }
-
-    const productDetails = productDetailsArray.map((product) => ({
-      id: product.id,
-      quantity: body.products.find((p) => p.id === product.id)?.quantity ?? 0,
-      isService: product.isService,
-      price: product.price,
-      offerPrice: product.offerPrice,
-    }));
-
-    // Calculate total amount from database product prices
-    const totalAmount = productDetails.reduce(
-      (total, orderProduct) =>
-        total + orderProduct.price * orderProduct.quantity,
-      0,
-    );
-    const paidAmount = body.paymentMethods.reduce(
-      (acc, item) => acc + item.value,
-      0,
-    );
-    const salesOrder: SalesOrder = {
-      id: uuidv4(),
-      orderNumber,
-      idCustomer: body.idCustomer,
-      products: productDetails,
-      paymentMethods: body.paymentMethods,
-      paidAmount,
-      totalAmount,
-      status:
-        paidAmount === 0
-          ? SalesOrderStatus.pending
-          : paidAmount === totalAmount
-          ? SalesOrderStatus.paid
-          : SalesOrderStatus.partiallyPaid,
-      businessInfoId: user.businessInfoId,
-      createdBy: user.id,
-    };
-    return salesOrder;
   }
 
   async findAllPublic(
@@ -372,9 +253,8 @@ export class AppointmentsService extends TransactionSupport {
       }
 
       const appointment = appointmentResult[0] as Appointment;
-      const transactions: any[] = [];
 
-      // Separate paymentMethods from other fields
+      // Remove paymentMethods from update - no longer handled here
       const cleanedUpdateDto = deleteEmptyProperties(updateAppointmentDto);
       const { paymentMethods, ...cleanedDto } = cleanedUpdateDto as any;
 
@@ -394,81 +274,12 @@ export class AppointmentsService extends TransactionSupport {
         );
       }
 
-      // Handle payment methods update if provided
-      if (paymentMethods && paymentMethods.length > 0) {
-        let orderId = appointment.idOrder;
-
-        if (!orderId) {
-          // Create new order if none exists
-          const newOrder = await this.createOrderObject(
-            {
-              products: [
-                {
-                  id: appointment.idService,
-                  quantity: 1,
-                  isService: true,
-                  price: 0,
-                },
-              ],
-              paymentMethods: paymentMethods,
-              idCustomer: appointment.idCustomer || '',
-            },
-            user,
-          );
-
-          const orderCreateTx =
-            this.salesOrderModel.transaction.create(newOrder);
-          transactions.push(orderCreateTx);
-
-          // Update appointment with new order ID
-          cleanedDto.idOrder = newOrder.id;
-        } else {
-          // Update existing order - only update payment-related fields
-          const existingOrder = await this.salesOrderModel.get({
-            id: orderId,
-          });
-          if (!existingOrder) {
-            throw new Error('MS007');
-          }
-
-          const orderData = existingOrder.toJSON() as SalesOrder;
-
-          // Calculate new values based on payment methods
-          const paidAmount = this.calculatePaidAmount(paymentMethods);
-          const totalAmount = orderData.totalAmount || 0;
-          const orderStatus =
-            paidAmount === 0
-              ? 'pending'
-              : paidAmount === totalAmount
-              ? 'paid'
-              : 'partiallyPaid';
-
-          // Only update payment-related fields, keep existing id, orderNumber, products, etc.
-          const orderUpdateTx = this.salesOrderModel.transaction.update(
-            { id: orderId },
-            {
-              paymentMethods: paymentMethods,
-              paidAmount: paidAmount,
-              status: orderStatus,
-              modifiedBy: user.id,
-            } as any,
-          );
-          transactions.push(orderUpdateTx);
-        }
-      }
-
       // Update appointment fields if there are any changes
       if (Object.keys(cleanedDto).length > 0) {
-        const appointmentUpdateTx = this.model.transaction.update(
+        await this.model.update(
           { id: appointment.id },
           { ...cleanedDto, modifiedBy: user.id },
         );
-        transactions.push(appointmentUpdateTx);
-      }
-
-      // Execute transaction if there are any operations
-      if (transactions.length > 0) {
-        await this.transaction(transactions);
       }
 
       // Return updated appointment
@@ -478,7 +289,15 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS007');
       }
 
-      return new GenericResponse(updatedAppointment as Appointment);
+      const appointmentData = updatedAppointment.toJSON() as Appointment;
+
+      // Invoke Lambda to sync with Google Calendar asynchronously
+      await this.lambdaInvokeService.invokeGoogleCalendarSync(
+        appointmentData,
+        'update',
+      );
+
+      return new GenericResponse(appointmentData);
     } catch (error) {
       throw handleError(error);
     }
@@ -510,7 +329,15 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS007');
       }
 
-      return new GenericResponse(updatedAppointment as Appointment);
+      const appointmentData = updatedAppointment.toJSON() as Appointment;
+
+      // Invoke Lambda to sync with Google Calendar asynchronously
+      await this.lambdaInvokeService.invokeGoogleCalendarSync(
+        appointmentData,
+        'update',
+      );
+
+      return new GenericResponse(appointmentData);
     } catch (error) {
       throw handleError(error);
     }
@@ -541,14 +368,5 @@ export class AppointmentsService extends TransactionSupport {
     if (start >= end) {
       throw new Error('MS041');
     }
-  }
-
-  private calculatePaidAmount(
-    paymentMethods: Array<{ value: number }>,
-  ): number {
-    return (paymentMethods || []).reduce(
-      (acc, item) => acc + (item?.value || 0),
-      0,
-    );
   }
 }
