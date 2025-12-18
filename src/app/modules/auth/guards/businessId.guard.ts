@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
 import { User } from 'src/app/schemas/user.schema';
 import { handleError } from 'src/app/shared/error.functions';
 
@@ -9,7 +9,7 @@ export class BusinessIdGuard implements CanActivate {
     const user = request['user'] as User;
     try {
       if (!user.businessInfoId) {
-        throw handleError('MS009');
+        throw handleError('MS019');
       }
       request['businessInfoId'] = user.businessInfoId;
     } catch {

@@ -21,13 +21,6 @@ export class TimeslotsController {
     @Param('businessId') businessId: string,
     @Query() query: GetTimeslotsQueryDto,
   ): Promise<GenericResponse<TimeslotResponseDto[]>> {
-    const startDate = query.startDate ? new Date(query.startDate) : undefined;
-    const days = query.days || 12;
-
-    return this.timeslotsService.getAvailableTimeslots(businessId, query.serviceId, {
-      startDate,
-      days,
-    });
+    return this.timeslotsService.getAvailableTimeslots(businessId, query);
   }
 }
-

@@ -173,3 +173,7 @@ export function toTitleCase(cad: string, split: string = ' ') {
   }
   return cad;
 }
+
+export function parseDate(date: Date | string | undefined): Date {
+  return date ? moment(date).toDate() : new Date()
+}

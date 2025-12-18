@@ -23,7 +23,8 @@
     "deploy:all": "npm run deploy:qas && npm run deploy:prd",
     "deploy:qas:force": "nest build && serverless deploy --stage qas",
     "deploy:prd:force": "nest build && serverless deploy --stage prd",
-    "deploy:all:force": "npm run deploy:qas:force && npm run deploy:prd:force"
+    "deploy:all:force": "npm run deploy:qas:force && npm run deploy:prd:force",
+    "generate:layer": "node generate-layer.js"
   },
   "dependencies": {
     "@nestjs/cache-manager": "^3.0.1",
@@ -49,12 +50,13 @@
     "request-ip": "^3.3.0",
     "rxjs": "^7.8.2",
     "uuid": "^11.1.0",
-    "aws-sdk": "^2.1691.0"
+    "@aws-sdk/client-lambda": "^3.750.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.7",
     "@nestjs/schematics": "^11.0.5",
     "@nestjs/testing": "^11.1.0",
+    "archiver": "^7.0.1",
     "@types/aws-lambda": "^8.10.149",
     "@types/aws-serverless-express": "^3.3.10",
     "@types/crypto-js": "^4.2.2",

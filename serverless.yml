@@ -30,7 +30,6 @@ provider:
             - ssm:GetParametersByPath
           Resource:
             - arn:aws:ssm:${self:provider.region}:*:parameter/vyva/${self:provider.stage}/*
-
         # Permisos para DynamoDB (appointments, customers, users, products)
         - Effect: Allow
           Action:
@@ -70,9 +69,9 @@ provider:
 
 functions:
   api:
-    handler: dist/lambda.handler
+    handler: dist/src/lambda.handler
     layers:
-      - arn:aws:lambda:us-east-1:754881596744:layer:vyva-auth:1
+      - arn:aws:lambda:us-east-1:754881596744:layer:vyva-appointments:1
     events:
       - http:
           path: /api/appointments

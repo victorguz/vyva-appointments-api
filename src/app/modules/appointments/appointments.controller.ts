@@ -6,7 +6,6 @@ import { Appointment } from '../../schemas/appointment.schema';
 import { User } from '../../schemas/user.schema';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthGuard } from '../auth/guards/auth.guard';
-import { BusinessIdGuard } from '../auth/guards/businessId.guard';
 import { AppointmentsService } from './appointments.service';
 import {
   CreateAppointmentDto,
@@ -14,6 +13,7 @@ import {
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
 } from './dto/appointments.dto';
+import { BusinessIdGuard } from '../auth/guards/businessId.guard';
 
 @ApiTags('Appointments')
 @Controller('appointments')
@@ -70,6 +70,7 @@ export class AppointmentsController {
     description: 'Return all appointments.',
     type: GenericResponse<[Appointment]>,
   })
+  @UseGuards(AuthGuard, BusinessIdGuard)
   async findAll(
     @Query() filters: ListAppointmentDto,
     @CurrentUser() user: User,

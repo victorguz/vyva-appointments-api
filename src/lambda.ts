@@ -1,10 +1,10 @@
 import { Context } from 'aws-lambda';
 import { createServer, proxy, Response } from 'aws-serverless-express';
 import { Server } from 'http';
+import * as express from 'express';
 
 import { createApp } from './main';
 
-const express = require('express');
 let cachedServer: Server;
 
 async function bootstrap(): Promise<Server> {

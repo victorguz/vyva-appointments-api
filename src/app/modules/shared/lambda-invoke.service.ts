@@ -1,17 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as AWS from 'aws-sdk';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 
 @Injectable()
 export class LambdaInvokeService {
-  private lambda: AWS.Lambda;
+  private lambdaClient: LambdaClient;
   private integrationsLambdaName: string;
 
   constructor(private readonly configService: ConfigService) {
     const region = this.configService.get<string>('REGION') || 'us-east-1';
     const stage = this.configService.get<string>('NODE_ENV') || 'qas';
     
-    this.lambda = new AWS.Lambda({ region });
+    this.lambdaClient = new LambdaClient({ region });
     // Lambda name format: vyva-integrations-{stage}-api
     this.integrationsLambdaName = `vyva-integrations-${stage}-api`;
   }
@@ -45,14 +45,14 @@ export class LambdaInvokeService {
         }),
       };
 
-      const params = {
+      const command = new InvokeCommand({
         FunctionName: this.integrationsLambdaName,
         InvocationType: 'Event', // Asynchronous (Fire and Forget)
-        Payload: JSON.stringify(fakeApiGatewayEvent),
-      };
+        Payload: Buffer.from(JSON.stringify(fakeApiGatewayEvent)),
+      });
 
       // Invoke lambda asynchronously - returns immediately
-      await this.lambda.invoke(params).promise();
+      await this.lambdaClient.send(command);
       
       console.log(`Google Calendar sync invoked for appointment ${appointment.id} (${action})`);
     } catch (error) {

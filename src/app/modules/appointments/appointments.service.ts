@@ -135,41 +135,94 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS014');
       }
 
-      let query = this.model.scan();
+      // OPTIMIZACIÓN: Usar query con GSI en lugar de scan
+      let appointments: Appointment[] = [];
 
-      // Apply filters
-      if (filters?.idCustomer) {
-        query = query.where('idCustomer').eq(filters.idCustomer);
-      }
-
-      if (filters?.idEmployee) {
-        query = query.where('idEmployee').eq(filters.idEmployee);
-      }
-
+      // Si hay filtro por idOrder, usar order-index (más específico)
       if (filters?.idOrder) {
-        query = query.where('idOrder').eq(filters.idOrder);
+        const orderQuery = await this.model
+          .query('idOrder')
+          .using('order-index')
+          .eq(filters.idOrder)
+          .exec();
+        
+        appointments = orderQuery.filter(
+          (apt) => apt.businessInfoId === businessId &&
+            (!filters.idCustomer || apt.idCustomer === filters.idCustomer) &&
+            (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
+            (!filters.status || apt.status === filters.status) &&
+            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
+            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+        );
+      }
+      // Si hay filtro por idCustomer, usar customer-index
+      else if (filters?.idCustomer) {
+        const customerQuery = await this.model
+          .query('idCustomer')
+          .using('customer-index')
+          .eq(filters.idCustomer)
+          .exec();
+        
+        appointments = customerQuery.filter(
+          (apt) => apt.businessInfoId === businessId &&
+            (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
+            (!filters.status || apt.status === filters.status) &&
+            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
+            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+        );
+      }
+      // Si hay filtro por idEmployee, usar employee-index
+      else if (filters?.idEmployee) {
+        const employeeQuery = await this.model
+          .query('idEmployee')
+          .using('employee-index')
+          .eq(filters.idEmployee)
+          .exec();
+        
+        appointments = employeeQuery.filter(
+          (apt) => apt.businessInfoId === businessId &&
+            (!filters.status || apt.status === filters.status) &&
+            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
+            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+        );
+      }
+      // Si hay filtro por status, usar status-index
+      else if (filters?.status) {
+        const statusQuery = await this.model
+          .query('status')
+          .using('status-index')
+          .eq(filters.status)
+          .exec();
+        
+        appointments = statusQuery.filter(
+          (apt) => apt.businessInfoId === businessId &&
+            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
+            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+        );
+      }
+      // Si no hay filtros específicos, usar businessInfo-index como base
+      else {
+        const businessQuery = await this.model
+          .query('businessInfoId')
+          .using('businessInfo-index')
+          .eq(businessId)
+          .exec();
+        
+        appointments = businessQuery.filter(
+          (apt) => {
+            const startDateMatch = !filters?.startDate || 
+              new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime();
+            const endDateMatch = !filters?.endDate || 
+              new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime();
+            
+            return startDateMatch && endDateMatch;
+          }
+        );
       }
 
-      if (filters?.status) {
-        query = query.where('status').eq(filters.status);
-      }
-
-      // Always filter by business
-      query = query.where('businessInfoId').eq(businessId);
-
-      // Apply date range filters
-      if (filters?.startDate) {
-        query = query.where('startDate').ge(new Date(filters.startDate) as any);
-      }
-
-      if (filters?.endDate) {
-        query = query.where('endDate').le(new Date(filters.endDate) as any);
-      }
-
-      const appointments = (await query.exec()).map(
+      return new GenericResponse(appointments.map(
         (appointment) => appointment as Appointment,
-      );
-      return new GenericResponse(appointments);
+      ));
     } catch (error) {
       throw handleError(error);
     }
@@ -185,45 +238,94 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS014');
       }
 
-      let query = this.model.scan();
+      // OPTIMIZACIÓN: Usar query con GSI en lugar de scan
+      let appointments: Appointment[] = [];
 
-      // Apply filters
-      if (filters?.idCustomer) {
-        query = query.where('idCustomer').eq(filters.idCustomer);
-      }
-
-      if (filters?.idEmployee) {
-        query = query.where('idEmployee').eq(filters.idEmployee);
-      }
-
-      // if (filters?.idService) {
-      //   query = query.where('idService').eq(filters.idService);
-      // }
-
+      // Si hay filtro por idOrder, usar order-index (más específico)
       if (filters?.idOrder) {
-        query = query.where('idOrder').eq(filters.idOrder);
+        const orderQuery = await this.model
+          .query('idOrder')
+          .using('order-index')
+          .eq(filters.idOrder)
+          .exec();
+        
+        appointments = orderQuery.filter(
+          (apt) => apt.businessInfoId === user.businessInfoId &&
+            (!filters.idCustomer || apt.idCustomer === filters.idCustomer) &&
+            (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
+            (!filters.status || apt.status === filters.status) &&
+            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
+            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+        );
+      }
+      // Si hay filtro por idCustomer, usar customer-index
+      else if (filters?.idCustomer) {
+        const customerQuery = await this.model
+          .query('idCustomer')
+          .using('customer-index')
+          .eq(filters.idCustomer)
+          .exec();
+        
+        appointments = customerQuery.filter(
+          (apt) => apt.businessInfoId === user.businessInfoId &&
+            (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
+            (!filters.status || apt.status === filters.status) &&
+            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
+            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+        );
+      }
+      // Si hay filtro por idEmployee, usar employee-index
+      else if (filters?.idEmployee) {
+        const employeeQuery = await this.model
+          .query('idEmployee')
+          .using('employee-index')
+          .eq(filters.idEmployee)
+          .exec();
+        
+        appointments = employeeQuery.filter(
+          (apt) => apt.businessInfoId === user.businessInfoId &&
+            (!filters.status || apt.status === filters.status) &&
+            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
+            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+        );
+      }
+      // Si hay filtro por status, usar status-index
+      else if (filters?.status) {
+        const statusQuery = await this.model
+          .query('status')
+          .using('status-index')
+          .eq(filters.status)
+          .exec();
+        
+        appointments = statusQuery.filter(
+          (apt) => apt.businessInfoId === user.businessInfoId &&
+            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
+            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+        );
+      }
+      // Si no hay filtros específicos, usar businessInfo-index como base
+      else {
+        const businessQuery = await this.model
+          .query('businessInfoId')
+          .using('businessInfo-index')
+          .eq(user.businessInfoId)
+          .exec();
+        
+        appointments = businessQuery.filter(
+          (apt) => {
+            const startDateMatch = !filters?.startDate || 
+              new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime();
+            const endDateMatch = !filters?.endDate || 
+              new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime();
+            
+            return startDateMatch && endDateMatch;
+          }
+        );
       }
 
-      if (filters?.status) {
-        query = query.where('status').eq(filters.status);
-      }
-
-      // Always filter by business
-      query = query.where('businessInfoId').eq(user.businessInfoId);
-
-      // Apply date range filters
-      if (filters?.startDate) {
-        query = query.where('startDate').ge(new Date(filters.startDate) as any);
-      }
-
-      if (filters?.endDate) {
-        query = query.where('endDate').le(new Date(filters.endDate) as any);
-      }
-
-      const appointments = (await query.exec()).map(
+      return new GenericResponse(appointments.map(
         (appointment) => appointment as Appointment,
-      );
-      return new GenericResponse(appointments);
+      ));
     } catch (error) {
       throw handleError(error);
     }
@@ -240,19 +342,17 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS014');
       }
 
-      const appointmentResult = await this.model
-        .scan()
-        .where('id')
-        .eq(id)
-        .where('businessInfoId')
-        .eq(user.businessInfoId)
-        .exec();
+      // OPTIMIZACIÓN: Usar get() en lugar de scan() para búsqueda por ID (clave primaria)
+      const appointment = await this.model.get({ id });
 
-      if (!appointmentResult || appointmentResult.length === 0) {
+      if (!appointment) {
         throw new Error('MS007');
       }
 
-      const appointment = appointmentResult[0] as Appointment;
+      // Validar que pertenece al negocio del usuario
+      if (appointment.businessInfoId !== user.businessInfoId) {
+        throw new Error('MS007');
+      }
 
       // Remove paymentMethods from update - no longer handled here
       const cleanedUpdateDto = deleteEmptyProperties(updateAppointmentDto);
