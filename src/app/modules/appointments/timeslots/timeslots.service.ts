@@ -240,6 +240,38 @@ export class TimeslotsService {
     return baseSlots;
   }
 
+  /**
+   * Calculate occupation by employee and return the least occupied employee
+   * @param appointments List of appointments for a specific date
+   * @param activeEmployees List of active employees
+   * @returns The least occupied employee (or null if no employees)
+   */
+  private calculateOccupationByEmployee(
+    appointments: Appointment[],
+    activeEmployees: User[],
+  ): OccupationByEmployeeDto | null {
+    if (activeEmployees.length === 0) {
+      return null;
+    }
+
+    // Count appointments by employee using lodash
+    const appointmentCounts = _.countBy(
+      appointments,
+      (appt) => appt.idEmployee,
+    );
+
+    // Create occupation array for all active employees (including those with 0 appointments)
+    const occupationByEmployee: OccupationByEmployeeDto[] = activeEmployees
+      .map((emp) => ({
+        idEmployee: emp.id,
+        times: appointmentCounts[emp.id] || 0,
+      }))
+      .sort((a, b) => a.times - b.times); // Sort by occupation (least occupied first)
+
+    // Return the least occupied employee (first in sorted array)
+    return occupationByEmployee.length > 0 ? occupationByEmployee[0] : null;
+  }
+
   private getAvailableSlotsByEmployee(
     baseSlots: BaseSlotDto[],
     appointments: Appointment[],
@@ -263,10 +295,11 @@ export class TimeslotsService {
       const dateSlots = slotsByDate[date];
       const dateAppointments = appointmentsByDate[date] || [];
 
-      // Contar appointments por idEmployee usando lodash para esta fecha
-      const occupationByEmployee: OccupationByEmployeeDto[] = _.toPairs(
-        _.countBy(dateAppointments, (appt) => appt.idEmployee),
-      ).map(([idEmployee, times]) => ({ idEmployee, times: Number(times) }));
+      // Calculate occupation by employee using the new function (returns least occupied employee)
+      const occupationByEmployee = this.calculateOccupationByEmployee(
+        dateAppointments,
+        activeEmployees,
+      );
 
       // Si un timeslot está libre para algún empleado, lo incluimos con los empleados disponibles para ese slot
       const availableTimeslots: AvailableTimeSlot[] = dateSlots
