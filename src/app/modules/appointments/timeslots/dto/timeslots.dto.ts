@@ -35,20 +35,6 @@ export class GetTimeslotsQueryDto {
   days: number;
 
   @ApiProperty({
-    description: 'Minimum hour (format: HH:mm, optional, default: 08:00)',
-    required: false,
-  })
-  @IsString()
-  minHour: string;
-
-  @ApiProperty({
-    description: 'Maximum hour (format: HH:mm, optional, default: 18:00)',
-    required: false,
-  })
-  @IsString()
-  maxHour: string;
-
-  @ApiProperty({
     description:
       'Client timezone offset in minutes (optional, e.g., -300 for UTC-5)',
     required: false,
@@ -56,16 +42,6 @@ export class GetTimeslotsQueryDto {
   @Type(() => Number)
   @IsNumber()
   timezoneOffset: number;
-}
-
-export class TimeslotResponseDto {
-  @ApiProperty({ description: 'Employee ID' })
-  @IsString()
-  idEmployee: string;
-
-  @ApiProperty({ description: 'Available slots' })
-  @IsArray()
-  availableSlots: BaseSlotDto[];
 }
 
 export class BaseSlotDto {
@@ -87,4 +63,26 @@ export class BusinessConfigDto {
   @ApiProperty({ description: 'Split time' })
   @IsNumber()
   splitTime: number; // Minutes
+}
+
+export class TimeslotResponseDto {
+  @ApiProperty({ description: 'Occupation by employee' })
+  occupationByEmployee: OccupationByEmployeeDto[];
+  @ApiProperty({ description: 'Available timeslots' })
+  availableTimeslots: AvailableTimeSlot[];
+}
+
+export class OccupationByEmployeeDto {
+  @ApiProperty({ description: 'Employee ID' })
+  idEmployee: string;
+  @ApiProperty({ description: 'Times' })
+  times: number;
+}
+export class AvailableTimeSlot {
+  @ApiProperty({ description: 'Employees IDs' })
+  idEmployees: string[];
+  @ApiProperty({ description: 'Start time' })
+  startTime: Date;
+  @ApiProperty({ description: 'End time' })
+  endTime: Date;
 }

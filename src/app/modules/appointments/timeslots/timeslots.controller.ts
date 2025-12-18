@@ -14,13 +14,13 @@ export class TimeslotsController {
   @ApiOperation({ summary: 'Get available timeslots for a business (public)' })
   @ApiResponse({
     status: 200,
-    description: 'Return available timeslots for the next 12 days.',
-    type: GenericResponse<[TimeslotResponseDto]>,
+    description: 'Return available timeslots grouped by date.',
+    type: GenericResponse,
   })
   async getAvailableTimeslotsPublic(
     @Param('businessId') businessId: string,
     @Query() query: GetTimeslotsQueryDto,
-  ): Promise<GenericResponse<TimeslotResponseDto[]>> {
+  ): Promise<GenericResponse<{ [date: string]: TimeslotResponseDto }>> {
     return this.timeslotsService.getAvailableTimeslots(businessId, query);
   }
 }

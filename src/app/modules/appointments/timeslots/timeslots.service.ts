@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model } from 'nestjs-dynamoose';
 import * as moment from 'moment-timezone';
-import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
 
 import { GenericResponse } from '../../../core/interfaces/generic-response.interface';
 import {
@@ -13,11 +12,14 @@ import { User, UserKey } from '../../../schemas/user.schema';
 import { handleError } from '../../../shared/error.functions';
 import { UsersService } from '../../users/users.service';
 import {
+  AvailableTimeSlot,
   BaseSlotDto,
   BusinessConfigDto,
   GetTimeslotsQueryDto,
+  OccupationByEmployeeDto,
   TimeslotResponseDto,
 } from './dto/timeslots.dto';
+import * as _ from 'lodash';
 
 @Injectable()
 export class TimeslotsService {
@@ -34,16 +36,8 @@ export class TimeslotsService {
    */
   async getAvailableTimeslots(
     businessId: string,
-
-    {
-      serviceId,
-      startDate,
-      days,
-      minHour,
-      maxHour,
-      timezoneOffset,
-    }: GetTimeslotsQueryDto,
-  ): Promise<GenericResponse<TimeslotResponseDto[]>> {
+    { serviceId, startDate, days, timezoneOffset }: GetTimeslotsQueryDto,
+  ): Promise<GenericResponse<{ [date: string]: TimeslotResponseDto }>> {
     try {
       let clientCurrentTime: moment.Moment | undefined;
 
@@ -60,20 +54,20 @@ export class TimeslotsService {
       // Get business configuration (defaults if not configured)
       const config = await this.getBusinessConfig(
         businessId,
-        minHour,
-        maxHour,
         service.measure,
+        timezoneOffset,
       );
 
-      const baseSlots = this.generateBaseSlots(moment(startDate), config);
+      const baseSlots = this.generateBaseSlots(moment(startDate), config, days);
 
-      const availableSlotsByEmployee = this.getAvailableSlotsByEmployee(
+      const availableSlotsByDate = this.getAvailableSlotsByEmployee(
         baseSlots,
         appointments,
         activeEmployees,
+        days,
       );
 
-      return new GenericResponse(availableSlotsByEmployee);
+      return new GenericResponse(availableSlotsByDate);
     } catch (error) {
       throw handleError(error);
     }
@@ -127,7 +121,10 @@ export class TimeslotsService {
       return [];
     }
 
-    const endDate = moment(startDate).endOf('day');
+    // Calculate end date: startDate + (days - 1) days
+    const endDate = moment(startDate)
+      .add(days - 1, 'days')
+      .endOf('day');
 
     // Convert moment dates to timestamps (milliseconds) for DynamoDB queries
     const startTimestamp = startDate.startOf('day').valueOf();
@@ -155,15 +152,46 @@ export class TimeslotsService {
    */
   private async getBusinessConfig(
     businessId: string,
-    minHour: string,
-    maxHour: string,
     serviceTime: number,
+    timezoneOffset: number,
   ): Promise<BusinessConfigDto> {
-    // Default configuration
-    // TODO: Fetch from domains or business config if available
+    // Get timezone offset in minutes from getTimezoneOffset()
+    // getTimezoneOffset() returns positive for timezones west of UTC (e.g., UTC-5 = 300)
+    // Example: UTC-5 (Bogotá) = 300 minutes, UTC+5 = -300 minutes
+    const minHour = '08:00';
+    const maxHour = '18:00';
+
+    const [parsedMinHour, parsedMinMinute] = minHour.split(':').map(Number);
+    const [parsedMaxHour, parsedMaxMinute] = maxHour.split(':').map(Number);
+
+    // Para convertir hora local a UTC:
+    // Si minHour es "08:00" hora local y estamos en UTC-5 (Bogotá),
+    // entonces 08:00 local = 08:00 + 5 horas = 13:00 UTC
+    // getTimezoneOffset() devuelve 300 (positivo) para UTC-5,
+    // así que debemos SUMAR para convertir local a UTC
+    const newMinHour = moment
+      .utc()
+      .set({
+        hour: parsedMinHour,
+        minute: parsedMinMinute,
+        second: 0,
+        millisecond: 0,
+      })
+      .add(timezoneOffset, 'minutes'); // Convierte hora local a UTC
+
+    const newMaxHour = moment
+      .utc()
+      .set({
+        hour: parsedMaxHour,
+        minute: parsedMaxMinute,
+        second: 0,
+        millisecond: 0,
+      })
+      .add(timezoneOffset, 'minutes'); // Convierte hora local a UTC
+
     return {
-      minHour: minHour || '08:00',
-      maxHour: maxHour || '18:00',
+      minHour: newMinHour.format('HH:mm'),
+      maxHour: newMaxHour.format('HH:mm'),
       splitTime: serviceTime + 5, // 5 minutes default
     };
   }
@@ -174,6 +202,7 @@ export class TimeslotsService {
   private generateBaseSlots(
     startDate: moment.Moment,
     config: BusinessConfigDto,
+    days: number,
   ): BaseSlotDto[] {
     const baseSlots: BaseSlotDto[] = [];
 
@@ -181,55 +210,99 @@ export class TimeslotsService {
     const [minHour, minMinute] = config.minHour.split(':').map(Number);
     const [maxHour, maxMinute] = config.maxHour.split(':').map(Number);
 
-    const startTime = moment(startDate)
-      .startOf('day')
-      .set({ hour: minHour, minute: minMinute, second: 0, millisecond: 0 });
-    const endTime = moment(startDate)
-      .startOf('day')
-      .set({ hour: maxHour, minute: maxMinute, second: 0, millisecond: 0 });
+    // Generate slots for each day
+    for (let dayOffset = 0; dayOffset < days; dayOffset++) {
+      const currentDate = moment(startDate)
+        .add(dayOffset, 'days')
+        .startOf('day');
 
-    while (startTime.isBefore(endTime)) {
-      baseSlots.push({
-        start: startTime.toDate(),
-        end: endTime.toDate(),
-      });
-      startTime.add(config.splitTime, 'minutes');
+      const dayStartTime = currentDate
+        .clone()
+        .set({ hour: minHour, minute: minMinute, second: 0, millisecond: 0 });
+      const dayEndTime = currentDate
+        .clone()
+        .set({ hour: maxHour, minute: maxMinute, second: 0, millisecond: 0 });
+
+      const slotStart = dayStartTime.clone();
+      while (slotStart.isBefore(dayEndTime)) {
+        const slotEnd = slotStart.clone().add(config.splitTime, 'minutes');
+
+        // Only add slot if it doesn't exceed the end time
+        if (slotEnd.isSameOrBefore(dayEndTime)) {
+          baseSlots.push({
+            start: slotStart.toDate(),
+            end: slotEnd.toDate(),
+          });
+        }
+        slotStart.add(config.splitTime, 'minutes');
+      }
     }
     return baseSlots;
   }
 
-  /**
-   * Fase C: Filter available slots using the alternative approach
-   * Calculate occupied slots per employee and merge them
-   */
   private getAvailableSlotsByEmployee(
     baseSlots: BaseSlotDto[],
     appointments: Appointment[],
     activeEmployees: User[],
-  ): TimeslotResponseDto[] {
-    // Helper function to check overlap using moment's exact functions
-    const isOverlapping = (
-      slotStart: Date,
-      slotEnd: Date,
-      apptStart: Date,
-      apptEnd: Date,
-    ): boolean => {
-      return (
-        moment(slotStart).isSameOrBefore(apptStart) &&
-        moment(slotEnd).isSameOrBefore(apptEnd)
-      );
-    };
+    days: number,
+  ): { [date: string]: TimeslotResponseDto } {
+    // Group slots by date
+    const slotsByDate = _.groupBy(baseSlots, (slot) =>
+      moment(slot.start).format('YYYY-MM-DD'),
+    );
 
-    const freeSlots = activeEmployees.map((employee) => ({
-      idEmployee: employee.id,
-      availableSlots: baseSlots.filter(
-        (slot) =>
-          !appointments.some((appt) =>
-            isOverlapping(slot.start, slot.end, appt.startDate, appt.endDate),
-          ),
-      ),
-    }));
+    // Group appointments by date
+    const appointmentsByDate = _.groupBy(appointments, (appt) =>
+      moment(appt.startDate).format('YYYY-MM-DD'),
+    );
 
-    return freeSlots;
+    const result: { [date: string]: TimeslotResponseDto } = {};
+
+    // Process each date
+    Object.keys(slotsByDate).forEach((date) => {
+      const dateSlots = slotsByDate[date];
+      const dateAppointments = appointmentsByDate[date] || [];
+
+      // Contar appointments por idEmployee usando lodash para esta fecha
+      const occupationByEmployee: OccupationByEmployeeDto[] = _.toPairs(
+        _.countBy(dateAppointments, (appt) => appt.idEmployee),
+      ).map(([idEmployee, times]) => ({ idEmployee, times: Number(times) }));
+
+      // Si un timeslot está libre para algún empleado, lo incluimos con los empleados disponibles para ese slot
+      const availableTimeslots: AvailableTimeSlot[] = dateSlots
+        .map((slot) => {
+          // Para cada slot, encuentra los empleados que no tienen un appointment que se superponga al slot
+          const availableEmployeeIds = activeEmployees
+            .filter((emp) => {
+              const hasConflict = dateAppointments.some((appt) => {
+                // Conflicto si el appointment es del empleado y se solapa con el slot
+                if (appt.idEmployee !== emp.id) return false;
+                return (
+                  moment(slot.start).isBefore(appt.endDate) &&
+                  moment(slot.end).isAfter(appt.startDate)
+                );
+              });
+              return !hasConflict;
+            })
+            .map((emp) => emp.id);
+
+          if (availableEmployeeIds.length > 0) {
+            return {
+              idEmployees: availableEmployeeIds,
+              startTime: slot.start,
+              endTime: slot.end,
+            } as AvailableTimeSlot;
+          }
+          return null;
+        })
+        .filter(Boolean);
+
+      result[date] = {
+        occupationByEmployee,
+        availableTimeslots,
+      } as TimeslotResponseDto;
+    });
+
+    return result;
   }
 }
