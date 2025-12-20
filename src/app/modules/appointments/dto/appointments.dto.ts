@@ -176,3 +176,41 @@ export class UpdateAppointmentStatusDto {
   @IsOptional()
   modifiedBy?: string;
 }
+
+export class CustomerAppointmentFiltersDto {
+  @ApiProperty({
+    description: 'Status filter',
+    enum: AppointmentStatus,
+  })
+  @IsEnum(AppointmentStatus)
+  @IsOptional()
+  status?: AppointmentStatus;
+
+  @ApiProperty({ description: 'Start date filter (ISO 8601 format)' })
+  @IsDateString()
+  @IsOptional()
+  startDate?: string;
+
+  @ApiProperty({ description: 'End date filter (ISO 8601 format)' })
+  @IsDateString()
+  @IsOptional()
+  endDate?: string;
+}
+
+export class CustomerAppointmentResponseDto {
+  id: string;
+  startDate: Date;
+  endDate: Date;
+  idService: string;
+  idCustomer?: string;
+  idEmployee?: string;
+  idOrder?: string;
+  status: AppointmentStatus;
+  businessInfoId?: string;
+  createdBy?: string;
+  modifiedBy?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  businessName?: string;
+  productName?: string;
+}

@@ -1,4 +1,15 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
@@ -9,6 +20,7 @@ import { AuthGuard } from '../auth/guards/auth.guard';
 import { AppointmentsService } from './appointments.service';
 import {
   CreateAppointmentDto,
+  CustomerAppointmentFiltersDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
@@ -19,20 +31,6 @@ import { BusinessIdGuard } from '../auth/guards/businessId.guard';
 @Controller('appointments')
 export class AppointmentsController {
   constructor(private readonly appointmentsService: AppointmentsService) {}
-
-  @Get('public/:businessId')
-  @ApiOperation({ summary: 'Get all appointments for a business (public)' })
-  @ApiResponse({
-    status: 200,
-    description: 'Return all appointments for the business.',
-    type: GenericResponse<[Appointment]>,
-  })
-  async findAllPublic(
-    @Param('businessId') businessId: string,
-    @Query() filters: ListAppointmentDto,
-  ): Promise<GenericResponse<Appointment[]>> {
-    return this.appointmentsService.findAllPublic(businessId, filters);
-  }
 
   @Post('public')
   @ApiOperation({ summary: 'Create a new appointment (public)' })
@@ -78,6 +76,22 @@ export class AppointmentsController {
     return this.appointmentsService.findAll(user, filters);
   }
 
+  @Get('customer-appointments')
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    summary: 'Get all appointments for the authenticated customer',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Return all appointments for the customer.',
+    type: GenericResponse<[Appointment]>,
+  })
+  async findCustomerAppointments(
+    @CurrentUser() user: User,
+  ): Promise<GenericResponse<Appointment[]>> {
+    return this.appointmentsService.findAllByCustomer(user);
+  }
+
   @Put(':id')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Update an appointment' })
@@ -113,7 +127,22 @@ export class AppointmentsController {
     if (user) {
       updateStatusDto.modifiedBy = user.id;
     }
-    return this.appointmentsService.updateStatus(id, updateStatusDto);
+    return this.appointmentsService.updateStatus(id, updateStatusDto, user);
+  }
+
+  @Patch('customer-appointments/:id/cancel')
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Cancel an appointment (customer only)' })
+  @ApiResponse({
+    status: 200,
+    description: 'The appointment has been successfully canceled.',
+    type: GenericResponse<Appointment>,
+  })
+  async cancelCustomerAppointment(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    return this.appointmentsService.cancelCustomerAppointment(id, user);
   }
 
   @Delete(':id')

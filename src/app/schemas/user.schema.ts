@@ -5,10 +5,9 @@ export interface UserKey {
 }
 
 export interface User extends UserKey {
-  firstName: string;
-  lastName: string;
+  name: string;
   email: string;
-  password: string;
+  password?: string;
   role: string;
   status: boolean;
   documentType?: string;
@@ -24,8 +23,11 @@ export interface User extends UserKey {
   googleId?: string;
   profilePicture?: string;
   businessInfoId?: string;
+  specialty?: string;
+  profile?: string;
   data?: any;
   isVerified?: boolean;
+  apiKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -37,11 +39,15 @@ export const UserSchema = new Schema(
       hashKey: true,
       required: true,
     },
-    firstName: {
+    name: {
       type: String,
       required: true,
     },
-    lastName: {
+    specialty: {
+      type: String,
+      required: false,
+    },
+    profile: {
       type: String,
       required: false,
     },
@@ -132,9 +138,12 @@ export const UserSchema = new Schema(
       required: false,
       default: false,
     },
+    apiKey: {
+      type: String,
+      required: false,
+    },
   },
   {
     timestamps: true,
   },
 );
-

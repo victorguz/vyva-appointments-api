@@ -16,6 +16,7 @@ import { UsersService } from '../users/users.service';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import {
   CreateAppointmentDto,
+  CustomerAppointmentFiltersDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
@@ -125,109 +126,6 @@ export class AppointmentsService extends TransactionSupport {
     }
   }
 
-  async findAllPublic(
-    businessId: string,
-    filters?: ListAppointmentDto,
-  ): Promise<GenericResponse<Appointment[]>> {
-    try {
-      // Validate businessId
-      if (!businessId) {
-        throw new Error('MS014');
-      }
-
-      // OPTIMIZACIÓN: Usar query con GSI en lugar de scan
-      let appointments: Appointment[] = [];
-
-      // Si hay filtro por idOrder, usar order-index (más específico)
-      if (filters?.idOrder) {
-        const orderQuery = await this.model
-          .query('idOrder')
-          .using('order-index')
-          .eq(filters.idOrder)
-          .exec();
-        
-        appointments = orderQuery.filter(
-          (apt) => apt.businessInfoId === businessId &&
-            (!filters.idCustomer || apt.idCustomer === filters.idCustomer) &&
-            (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
-            (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
-            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
-        );
-      }
-      // Si hay filtro por idCustomer, usar customer-index
-      else if (filters?.idCustomer) {
-        const customerQuery = await this.model
-          .query('idCustomer')
-          .using('customer-index')
-          .eq(filters.idCustomer)
-          .exec();
-        
-        appointments = customerQuery.filter(
-          (apt) => apt.businessInfoId === businessId &&
-            (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
-            (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
-            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
-        );
-      }
-      // Si hay filtro por idEmployee, usar employee-index
-      else if (filters?.idEmployee) {
-        const employeeQuery = await this.model
-          .query('idEmployee')
-          .using('employee-index')
-          .eq(filters.idEmployee)
-          .exec();
-        
-        appointments = employeeQuery.filter(
-          (apt) => apt.businessInfoId === businessId &&
-            (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
-            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
-        );
-      }
-      // Si hay filtro por status, usar status-index
-      else if (filters?.status) {
-        const statusQuery = await this.model
-          .query('status')
-          .using('status-index')
-          .eq(filters.status)
-          .exec();
-        
-        appointments = statusQuery.filter(
-          (apt) => apt.businessInfoId === businessId &&
-            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
-            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
-        );
-      }
-      // Si no hay filtros específicos, usar businessInfo-index como base
-      else {
-        const businessQuery = await this.model
-          .query('businessInfoId')
-          .using('businessInfo-index')
-          .eq(businessId)
-          .exec();
-        
-        appointments = businessQuery.filter(
-          (apt) => {
-            const startDateMatch = !filters?.startDate || 
-              new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime();
-            const endDateMatch = !filters?.endDate || 
-              new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime();
-            
-            return startDateMatch && endDateMatch;
-          }
-        );
-      }
-
-      return new GenericResponse(appointments.map(
-        (appointment) => appointment as Appointment,
-      ));
-    } catch (error) {
-      throw handleError(error);
-    }
-  }
-
   async findAll(
     user: User,
     filters?: ListAppointmentDto,
@@ -248,14 +146,19 @@ export class AppointmentsService extends TransactionSupport {
           .using('order-index')
           .eq(filters.idOrder)
           .exec();
-        
+
         appointments = orderQuery.filter(
-          (apt) => apt.businessInfoId === user.businessInfoId &&
+          (apt) =>
+            apt.businessInfoId === user.businessInfoId &&
             (!filters.idCustomer || apt.idCustomer === filters.idCustomer) &&
             (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
             (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
-            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+            (!filters.startDate ||
+              new Date(apt.startDate).getTime() >=
+                new Date(filters.startDate).getTime()) &&
+            (!filters.endDate ||
+              new Date(apt.endDate).getTime() <=
+                new Date(filters.endDate).getTime()),
         );
       }
       // Si hay filtro por idCustomer, usar customer-index
@@ -265,13 +168,18 @@ export class AppointmentsService extends TransactionSupport {
           .using('customer-index')
           .eq(filters.idCustomer)
           .exec();
-        
+
         appointments = customerQuery.filter(
-          (apt) => apt.businessInfoId === user.businessInfoId &&
+          (apt) =>
+            apt.businessInfoId === user.businessInfoId &&
             (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
             (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
-            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+            (!filters.startDate ||
+              new Date(apt.startDate).getTime() >=
+                new Date(filters.startDate).getTime()) &&
+            (!filters.endDate ||
+              new Date(apt.endDate).getTime() <=
+                new Date(filters.endDate).getTime()),
         );
       }
       // Si hay filtro por idEmployee, usar employee-index
@@ -281,12 +189,17 @@ export class AppointmentsService extends TransactionSupport {
           .using('employee-index')
           .eq(filters.idEmployee)
           .exec();
-        
+
         appointments = employeeQuery.filter(
-          (apt) => apt.businessInfoId === user.businessInfoId &&
+          (apt) =>
+            apt.businessInfoId === user.businessInfoId &&
             (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
-            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+            (!filters.startDate ||
+              new Date(apt.startDate).getTime() >=
+                new Date(filters.startDate).getTime()) &&
+            (!filters.endDate ||
+              new Date(apt.endDate).getTime() <=
+                new Date(filters.endDate).getTime()),
         );
       }
       // Si hay filtro por status, usar status-index
@@ -296,11 +209,16 @@ export class AppointmentsService extends TransactionSupport {
           .using('status-index')
           .eq(filters.status)
           .exec();
-        
+
         appointments = statusQuery.filter(
-          (apt) => apt.businessInfoId === user.businessInfoId &&
-            (!filters.startDate || new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime()) &&
-            (!filters.endDate || new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime())
+          (apt) =>
+            apt.businessInfoId === user.businessInfoId &&
+            (!filters.startDate ||
+              new Date(apt.startDate).getTime() >=
+                new Date(filters.startDate).getTime()) &&
+            (!filters.endDate ||
+              new Date(apt.endDate).getTime() <=
+                new Date(filters.endDate).getTime()),
         );
       }
       // Si no hay filtros específicos, usar businessInfo-index como base
@@ -310,22 +228,44 @@ export class AppointmentsService extends TransactionSupport {
           .using('businessInfo-index')
           .eq(user.businessInfoId)
           .exec();
-        
-        appointments = businessQuery.filter(
-          (apt) => {
-            const startDateMatch = !filters?.startDate || 
-              new Date(apt.startDate).getTime() >= new Date(filters.startDate).getTime();
-            const endDateMatch = !filters?.endDate || 
-              new Date(apt.endDate).getTime() <= new Date(filters.endDate).getTime();
-            
-            return startDateMatch && endDateMatch;
-          }
-        );
+
+        appointments = businessQuery.filter((apt) => {
+          const startDateMatch =
+            !filters?.startDate ||
+            new Date(apt.startDate).getTime() >=
+              new Date(filters.startDate).getTime();
+          const endDateMatch =
+            !filters?.endDate ||
+            new Date(apt.endDate).getTime() <=
+              new Date(filters.endDate).getTime();
+
+          return startDateMatch && endDateMatch;
+        });
       }
 
-      return new GenericResponse(appointments.map(
-        (appointment) => appointment as Appointment,
-      ));
+      return new GenericResponse(
+        appointments.map((appointment) => appointment as Appointment),
+      );
+    } catch (error) {
+      throw handleError(error);
+    }
+  }
+
+  async findAllByCustomer(user: User): Promise<GenericResponse<Appointment[]>> {
+    try {
+      // Validate user
+      if (!user || !user.id) {
+        throw new Error('MS014');
+      }
+
+      // Use customer-index to query appointments by customer ID
+      const customerQuery = await this.model
+        .query('idCustomer')
+        .using('customer-index')
+        .eq(user.id)
+        .exec();
+
+      return new GenericResponse(customerQuery);
     } catch (error) {
       throw handleError(error);
     }
@@ -406,6 +346,7 @@ export class AppointmentsService extends TransactionSupport {
   async updateStatus(
     id: string,
     updateStatusDto: UpdateAppointmentStatusDto,
+    user?: User,
   ): Promise<GenericResponse<Appointment>> {
     try {
       // Validate id and status
@@ -416,11 +357,90 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS014');
       }
 
+      // Get the appointment to validate ownership
+      const appointment = await this.model.get({ id });
+
+      if (!appointment) {
+        throw new Error('MS007');
+      }
+
+      // If user is provided, validate ownership
+      if (user) {
+        // If user has businessInfoId, they're a business user - validate business ownership
+        if (user.businessInfoId) {
+          if (appointment.businessInfoId !== user.businessInfoId) {
+            throw new Error('MS007');
+          }
+        } else {
+          // User is a customer - validate customer ownership
+          if (appointment.idCustomer !== user.id) {
+            throw new Error('MS007');
+          }
+        }
+      }
+
       const updateData: any = { status: updateStatusDto.status };
 
       if (updateStatusDto.modifiedBy) {
         updateData.modifiedBy = updateStatusDto.modifiedBy;
       }
+
+      await this.model.update({ id }, updateData);
+      const updatedAppointment = await this.model.get({ id });
+
+      if (!updatedAppointment) {
+        throw new Error('MS007');
+      }
+
+      const appointmentData = updatedAppointment.toJSON() as Appointment;
+
+      // Invoke Lambda to sync with Google Calendar asynchronously
+      await this.lambdaInvokeService.invokeGoogleCalendarSync(
+        appointmentData,
+        'update',
+      );
+
+      return new GenericResponse(appointmentData);
+    } catch (error) {
+      throw handleError(error);
+    }
+  }
+
+  async cancelCustomerAppointment(
+    id: string,
+    user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    try {
+      // Validate id and user
+      if (!id) {
+        throw new Error('MS014');
+      }
+      if (!user || !user.id) {
+        throw new Error('MS014');
+      }
+
+      // Get the appointment to validate ownership
+      const appointment = await this.model.get({ id });
+
+      if (!appointment) {
+        throw new Error('MS007');
+      }
+
+      // Validate that the appointment belongs to the customer
+      if (appointment.idCustomer !== user.id) {
+        throw new Error('MS007');
+      }
+
+      // Only allow canceling if appointment is not already canceled
+      if (appointment.status === AppointmentStatus.canceled) {
+        throw new Error('MS042'); // Appointment already canceled
+      }
+
+      // Update status to canceled
+      const updateData: any = {
+        status: AppointmentStatus.canceledByCustomer,
+        modifiedBy: user.id,
+      };
 
       await this.model.update({ id }, updateData);
       const updatedAppointment = await this.model.get({ id });
