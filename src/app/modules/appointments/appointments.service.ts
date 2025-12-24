@@ -1,8 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
 import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
-import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
-import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { User } from 'src/app/schemas/user.schema';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -10,13 +8,9 @@ import { GenericResponse } from '../../core/interfaces/generic-response.interfac
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { handleError } from '../../shared/error.functions';
 import { deleteEmptyProperties } from '../../shared/shared.functions';
-import { CustomersService } from '../customers/customers.service';
-import { ProductsService } from '../products/products.service';
-import { UsersService } from '../users/users.service';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import {
   CreateAppointmentDto,
-  CustomerAppointmentFiltersDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
@@ -26,62 +20,10 @@ import {
 export class AppointmentsService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
-    private readonly customersService: CustomersService,
-    private readonly productsService: ProductsService,
-    private readonly usersService: UsersService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
-    @InjectModel('Customer')
-    private readonly customerModel: Model<Customer, CustomerKey>,
-    @InjectModel('Product')
-    private readonly productModel: Model<Product, ProductKey>,
   ) {
     super();
-  }
-
-  async createPublic(
-    body: CreateAppointmentDto,
-  ): Promise<GenericResponse<Appointment>> {
-    try {
-      if (!body.businessInfoId) {
-        throw new Error('MS014'); // BusinessInfoId is required
-      }
-
-      if (!body.startDate || !body.endDate) {
-        throw new Error('MS014'); // Start and end dates are required
-      }
-
-      this.validateAppointmentDates(body.startDate, body.endDate);
-
-      const appointment = {
-        id: uuidv4(),
-        startDate: new Date(body.startDate).getTime() as any,
-        endDate: new Date(body.endDate).getTime() as any,
-        idService: body.idService,
-        idCustomer: body.idCustomer,
-        idEmployee: body.idEmployee,
-        status: AppointmentStatus.pending,
-        businessInfoId: body.businessInfoId,
-        createdBy: undefined as any,
-      };
-
-      const cleanedPayload = deleteEmptyProperties(appointment);
-
-      await this.model.create(cleanedPayload);
-
-      const appointmentResult = await this.model.get({ id: appointment.id });
-      const appointmentData = appointmentResult.toJSON() as Appointment;
-
-      // Invoke Lambda to sync with Google Calendar asynchronously
-      await this.lambdaInvokeService.invokeGoogleCalendarSync(
-        appointmentData,
-        'create',
-      );
-
-      return new GenericResponse(appointmentData);
-    } catch (error) {
-      throw handleError(error);
-    }
   }
 
   async create(
@@ -406,62 +348,6 @@ export class AppointmentsService extends TransactionSupport {
     }
   }
 
-  async cancelCustomerAppointment(
-    id: string,
-    user: User,
-  ): Promise<GenericResponse<Appointment>> {
-    try {
-      // Validate id and user
-      if (!id) {
-        throw new Error('MS014');
-      }
-      if (!user || !user.id) {
-        throw new Error('MS014');
-      }
-
-      // Get the appointment to validate ownership
-      const appointment = await this.model.get({ id });
-
-      if (!appointment) {
-        throw new Error('MS007');
-      }
-
-      // Validate that the appointment belongs to the customer
-      if (appointment.idCustomer !== user.id) {
-        throw new Error('MS007');
-      }
-
-      // Only allow canceling if appointment is not already canceled
-      if (appointment.status === AppointmentStatus.canceled) {
-        throw new Error('MS042'); // Appointment already canceled
-      }
-
-      // Update status to canceled
-      const updateData: any = {
-        status: AppointmentStatus.canceledByCustomer,
-        modifiedBy: user.id,
-      };
-
-      await this.model.update({ id }, updateData);
-      const updatedAppointment = await this.model.get({ id });
-
-      if (!updatedAppointment) {
-        throw new Error('MS007');
-      }
-
-      const appointmentData = updatedAppointment.toJSON() as Appointment;
-
-      // Invoke Lambda to sync with Google Calendar asynchronously
-      await this.lambdaInvokeService.invokeGoogleCalendarSync(
-        appointmentData,
-        'update',
-      );
-
-      return new GenericResponse(appointmentData);
-    } catch (error) {
-      throw handleError(error);
-    }
-  }
 
   async remove(id: string): Promise<GenericResponse<boolean>> {
     try {

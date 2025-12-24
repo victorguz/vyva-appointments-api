@@ -20,7 +20,7 @@ export const dynamooseConfig = (
       prefix: `${nodeEnv}-vyva-`,
       // Solo crear tablas automáticamente en desarrollo local
       // En QAS/PRD las tablas deben existir previamente
-      create: false,
+      create: true,
       // Initialize debe estar en true para poder usar tablas existentes
       initialize: true,
       waitForActive: false,

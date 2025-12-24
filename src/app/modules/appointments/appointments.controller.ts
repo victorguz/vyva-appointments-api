@@ -26,11 +26,17 @@ import {
   UpdateAppointmentStatusDto,
 } from './dto/appointments.dto';
 import { BusinessIdGuard } from '../auth/guards/businessId.guard';
+import { AppointmentsCustomerService } from './appointments-customer.service';
+import { AppointmentsPublicService } from './appointments-public.service';
 
 @ApiTags('Appointments')
 @Controller('appointments')
 export class AppointmentsController {
-  constructor(private readonly appointmentsService: AppointmentsService) {}
+  constructor(
+    private readonly appointmentsService: AppointmentsService,
+    private readonly appointmentsCustomerService: AppointmentsCustomerService,
+    private readonly appointmentsPublicService: AppointmentsPublicService,
+  ) {}
 
   @Post('public')
   @ApiOperation({ summary: 'Create a new appointment (public)' })
@@ -42,7 +48,7 @@ export class AppointmentsController {
   async createPublic(
     @Body() createAppointmentDto: CreateAppointmentDto,
   ): Promise<GenericResponse<Appointment>> {
-    return this.appointmentsService.createPublic(createAppointmentDto);
+    return this.appointmentsPublicService.createPublic(createAppointmentDto);
   }
 
   @Post()
@@ -89,7 +95,7 @@ export class AppointmentsController {
   async findCustomerAppointments(
     @CurrentUser() user: User,
   ): Promise<GenericResponse<Appointment[]>> {
-    return this.appointmentsService.findAllByCustomer(user);
+    return this.appointmentsCustomerService.findAllByCustomer(user);
   }
 
   @Put(':id')
@@ -142,18 +148,6 @@ export class AppointmentsController {
     @Param('id') id: string,
     @CurrentUser() user: User,
   ): Promise<GenericResponse<Appointment>> {
-    return this.appointmentsService.cancelCustomerAppointment(id, user);
-  }
-
-  @Delete(':id')
-  @UseGuards(AuthGuard, BusinessIdGuard)
-  @ApiOperation({ summary: 'Delete an appointment' })
-  @ApiResponse({
-    status: 200,
-    description: 'The appointment has been successfully deleted.',
-    type: GenericResponse<boolean>,
-  })
-  async remove(@Param('id') id: string): Promise<GenericResponse<boolean>> {
-    return this.appointmentsService.remove(id);
+    return this.appointmentsCustomerService.cancelCustomerAppointment(id, user);
   }
 }

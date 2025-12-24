@@ -43,7 +43,7 @@ export const AppointmentSchema = new Schema(
     },
     idService: {
       type: String,
-      required: false,
+      required: true,
       index: {
         type: 'global',
         name: 'service-index',
