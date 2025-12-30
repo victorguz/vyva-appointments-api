@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus } from '@nestjs/common';
 import {
   HANDLED_ERRORS,
   ERROR_MESSAGES,
@@ -10,8 +10,6 @@ export function handleError(
   error: any,
   httpStatus?: HttpStatus,
 ): HttpException {
-  const logger = new Logger(handleError.name);
-
   let code: string = 'MS027';
   let message: string = ERROR_MESSAGES.MS027;
   let status: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
@@ -64,13 +62,52 @@ export function handleError(
     // Si no está manejado, se mantiene MS027 por defecto
   }
 
-  // Log del error real solo en desarrollo, pero nunca se expone al cliente
+  // Log del error real - usar console para que aparezca en CloudWatch
+  const errorMessage =
+    typeof error === 'string'
+      ? error
+      : (error as any)?.message || JSON.stringify(error);
+
+  const errorType =
+    typeof error === 'string'
+      ? error
+      : (error as any)?.code || (error as any)?.error || 'Unknown error';
+
+  // Intentar serializar el error original de forma segura
+  let originalError: any;
+  try {
+    if (typeof error === 'object' && error !== null) {
+      originalError = JSON.stringify(error, Object.getOwnPropertyNames(error));
+    } else {
+      originalError = error;
+    }
+  } catch (e) {
+    originalError = String(error);
+  }
+
+  const errorDetails = {
+    originalError,
+    type: errorType,
+    message: errorMessage,
+    stack: (error as any)?.stack,
+    handledError,
+    finalCode: code,
+    finalStatus: status,
+  };
+
+  // Siempre loguear el error completo en console para CloudWatch
+  console.error('[handleError] Error:', JSON.stringify(errorDetails, null, 2));
+
   if (!isProduction) {
-    const errorMessage =
-      typeof error === 'string'
-        ? error
-        : (error as any)?.message || JSON.stringify(error);
-    logger.error(`Error no manejado: ${errorMessage}`, (error as any)?.stack);
+    console.error(
+      `[handleError] Error: ${errorMessage}`,
+      (error as any)?.stack,
+    );
+  } else {
+    console.error(
+      `[handleError] Error en producción - Tipo: ${errorType}`,
+      error,
+    );
   }
 
   // Si el error no fue manejado, siempre usar MS027

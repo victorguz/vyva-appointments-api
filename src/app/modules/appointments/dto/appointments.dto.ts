@@ -1,6 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsDateString, IsEnum, IsNotEmpty, IsOptional, IsString, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 
 import { AppointmentStatus } from '../../../core/constants/domain.constants';
 import { SalesOrderPaymentMethodDto } from './payment-method.dto';
@@ -37,7 +45,8 @@ export class CreateAppointmentDto {
   idOrder: string;
 
   @ApiProperty({
-    description: 'Payment methods for the order (handled in frontend after appointment creation)',
+    description:
+      'Payment methods for the order (handled in frontend after appointment creation)',
     type: [SalesOrderPaymentMethodDto],
     required: false,
   })
@@ -59,7 +68,7 @@ export class CreateAppointmentDto {
   @ApiProperty({ description: 'Business Info ID (for public appointments)' })
   @IsString()
   @IsOptional()
-  businessInfoId?: string;
+  idBusiness?: string;
 }
 
 export class UpdateAppointmentDto {
@@ -206,7 +215,7 @@ export class CustomerAppointmentResponseDto {
   idEmployee?: string;
   idOrder?: string;
   status: AppointmentStatus;
-  businessInfoId?: string;
+  idBusiness?: string;
   createdBy?: string;
   modifiedBy?: string;
   createdAt?: Date;

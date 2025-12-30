@@ -50,6 +50,8 @@ provider:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-businesses
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-businesses/*
 
         # Permisos para crear y modificar tablas DynamoDB
         - Effect: Allow
@@ -69,6 +71,8 @@ provider:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-businesses
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-businesses/*
 
         # Permisos para invocar Lambda de integrations
         - Effect: Allow
@@ -110,6 +114,20 @@ functions:
               - Content-Type
               - Authorization
             allowCredentials: true
+
+resources:
+  Resources:
+    AppointmentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.stage}-vyva-appointments
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
 
 package:
   excludeDevDependencies: true

@@ -136,7 +136,7 @@ export class AppointmentsController {
     return this.appointmentsService.updateStatus(id, updateStatusDto, user);
   }
 
-  @Patch('customer-appointments/:id/cancel')
+  @Delete('customer-appointments/:id/cancel')
   @UseGuards(AuthGuard)
   @ApiOperation({ summary: 'Cancel an appointment (customer only)' })
   @ApiResponse({

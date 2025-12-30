@@ -34,6 +34,7 @@ if (!UserSchema || UserSchema.constructor.name !== 'Schema') {
         schema: UserSchema,
         options: {
           tableName: 'users',
+          throughput: 'ON_DEMAND',
         },
         serializers: {
           frontend: {

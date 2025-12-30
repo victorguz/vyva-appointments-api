@@ -15,7 +15,7 @@ export interface Appointment extends AppointmentKey {
   idEmployee?: string;
   idOrder?: string;
   status: AppointmentStatus;
-  businessInfoId?: string;
+  idBusiness?: string;
   createdBy?: string;
   modifiedBy?: string;
   createdAt?: Date;
@@ -32,10 +32,6 @@ export const AppointmentSchema = new Schema(
     startDate: {
       type: Date,
       required: true,
-      index: {
-        type: 'global',
-        name: 'startDate-index',
-      },
     },
     endDate: {
       type: Date,
@@ -44,10 +40,6 @@ export const AppointmentSchema = new Schema(
     idService: {
       type: String,
       required: true,
-      index: {
-        type: 'global',
-        name: 'service-index',
-      },
     },
     idCustomer: {
       type: String,
@@ -82,12 +74,12 @@ export const AppointmentSchema = new Schema(
         name: 'status-index',
       },
     },
-    businessInfoId: {
+    idBusiness: {
       type: String,
-      required: true,
+      required: false,
       index: {
         type: 'global',
-        name: 'businessInfo-index',
+        name: 'idBusiness-index',
       },
     },
     createdBy: {

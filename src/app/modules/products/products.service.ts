@@ -19,8 +19,8 @@ export class ProductsService {
         .scan()
         .where('id')
         .eq(id)
-        .where('businessInfoId')
-        .eq(user.businessInfoId)
+        .where('idBusiness')
+        .eq(user.idBusiness)
         .exec();
       if (!product || product.length === 0) {
         throw new Error('MS007');
@@ -31,4 +31,3 @@ export class ProductsService {
     }
   }
 }
-

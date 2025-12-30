@@ -10,7 +10,7 @@ export class LambdaInvokeService {
   constructor(private readonly configService: ConfigService) {
     const region = this.configService.get<string>('REGION') || 'us-east-1';
     const stage = this.configService.get<string>('NODE_ENV') || 'qas';
-    
+
     this.lambdaClient = new LambdaClient({ region });
     // Lambda name format: vyva-integrations-{stage}-api
     this.integrationsLambdaName = `vyva-integrations-${stage}-api`;
@@ -19,7 +19,10 @@ export class LambdaInvokeService {
   /**
    * Invoke integrations Lambda to create/update Google Calendar event
    */
-  async invokeGoogleCalendarSync(appointment: any, action: 'create' | 'update'): Promise<void> {
+  async invokeGoogleCalendarSync(
+    appointment: any,
+    action: 'create' | 'update',
+  ): Promise<void> {
     try {
       // Simulate API Gateway event structure
       const fakeApiGatewayEvent = {
@@ -30,7 +33,7 @@ export class LambdaInvokeService {
         },
         body: JSON.stringify({
           appointmentId: appointment.id,
-          businessInfoId: appointment.businessInfoId,
+          idBusiness: appointment.idBusiness,
           action, // 'create' or 'update'
           appointment: {
             id: appointment.id,
@@ -40,7 +43,7 @@ export class LambdaInvokeService {
             idCustomer: appointment.idCustomer,
             idEmployee: appointment.idEmployee,
             status: appointment.status,
-            businessInfoId: appointment.businessInfoId,
+            idBusiness: appointment.idBusiness,
           },
         }),
       };
@@ -53,12 +56,13 @@ export class LambdaInvokeService {
 
       // Invoke lambda asynchronously - returns immediately
       await this.lambdaClient.send(command);
-      
-      console.log(`Google Calendar sync invoked for appointment ${appointment.id} (${action})`);
+
+      console.log(
+        `Google Calendar sync invoked for appointment ${appointment.id} (${action})`,
+      );
     } catch (error) {
       // Log error but don't throw - appointment creation should still succeed
       console.error('Error invoking Google Calendar sync Lambda:', error);
     }
   }
 }
-

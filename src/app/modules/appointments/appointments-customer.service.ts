@@ -40,13 +40,11 @@ export class AppointmentsCustomerService extends TransactionSupport {
         throw new Error('MS014');
       }
 
-      // Use customer-index to query appointments by customer ID
-      // Query appointments by customer id (should use user.id, hardcoded here, replace as needed)
+      // OPTIMIZACIÓN: Usar query con GSI customer-index en lugar de scan
       const customerQueryResult = await this.model
-        .scan()
+        .query('idCustomer')
         .using('customer-index')
-        .where('idCustomer')
-        .eq('601c25af-a8ac-4d16-9a55-1ac28db7d692')
+        .eq(user.id)
         .exec();
 
       // Dynamose returns an array of Appointment (typed), otherwise type as Appointment[] to be explicit
@@ -77,15 +75,15 @@ export class AppointmentsCustomerService extends TransactionSupport {
           }
         }
 
-        // Handle Business (businessInfoId)
-        if (appointment.businessInfoId) {
-          if (businessCache.has(appointment.businessInfoId)) {
-            business = businessCache.get(appointment.businessInfoId) || null;
+        // Handle Business (idBusiness)
+        if (product?.idBusiness) {
+          if (businessCache.has(product.idBusiness)) {
+            business = businessCache.get(product.idBusiness) || null;
           } else {
             business = await this.businessModel.get({
-              id: appointment.businessInfoId,
+              id: product.idBusiness,
             });
-            businessCache.set(appointment.businessInfoId, business || null);
+            businessCache.set(product.idBusiness, business || null);
           }
         }
 

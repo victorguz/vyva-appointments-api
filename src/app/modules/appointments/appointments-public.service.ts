@@ -30,8 +30,8 @@ export class AppointmentsPublicService extends TransactionSupport {
     body: CreateAppointmentDto,
   ): Promise<GenericResponse<Appointment>> {
     try {
-      if (!body.businessInfoId) {
-        throw new Error('MS014'); // BusinessInfoId is required
+      if (!body.idBusiness) {
+        throw new Error('MS014'); // BusinessId is required
       }
 
       if (!body.startDate || !body.endDate) {
@@ -48,7 +48,7 @@ export class AppointmentsPublicService extends TransactionSupport {
         idCustomer: body.idCustomer,
         idEmployee: body.idEmployee,
         status: AppointmentStatus.pending,
-        businessInfoId: body.businessInfoId,
+        idBusiness: body.idBusiness,
         createdBy: undefined as any,
       };
 

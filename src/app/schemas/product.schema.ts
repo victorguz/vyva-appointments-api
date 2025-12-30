@@ -1,6 +1,9 @@
 import { Schema } from 'dynamoose';
 
-import { MeasurementUnits, ProductStatus } from '../core/constants/domain.constants';
+import {
+  MeasurementUnits,
+  ProductStatus,
+} from '../core/constants/domain.constants';
 
 export interface ProductKey {
   id: string;
@@ -22,7 +25,7 @@ export interface Product extends ProductKey {
   price?: number;
   offerPrice?: number;
   stock?: number;
-  businessInfoId: string;
+  idBusiness: string;
   createdBy?: string;
   modifiedBy?: string;
   createdAt: Date;
@@ -85,7 +88,7 @@ export const ProductSchema = new Schema(
       type: Number,
       required: false,
     },
-    isService:{
+    isService: {
       type: Boolean,
       required: true,
     },
@@ -107,12 +110,12 @@ export const ProductSchema = new Schema(
       required: false,
       default: 0,
     },
-    businessInfoId: {
+    idBusiness: {
       type: String,
-      required: true,
+      required: false,
       index: {
         type: 'global',
-        name: 'businessInfo-index',
+        name: 'idBusiness-index',
       },
     },
     createdBy: {
@@ -128,4 +131,3 @@ export const ProductSchema = new Schema(
     timestamps: true,
   },
 );
-

@@ -29,7 +29,7 @@ export interface SalesOrder extends SalesOrderKey {
   totalAmount: number;
   paidAmount: number;
   status: string;
-  businessInfoId?: string;
+  idBusiness?: string;
   createdBy?: string;
   modifiedBy?: string;
   createdAt: Date;
@@ -103,12 +103,12 @@ export const SalesOrderSchema = new Schema(
       type: String,
       required: true,
     },
-    businessInfoId: {
+    idBusiness: {
       type: String,
-      required: true,
+      required: false,
       index: {
         type: 'global',
-        name: 'businessInfo-index',
+        name: 'idBusiness-index',
       },
     },
     createdBy: {
@@ -124,4 +124,3 @@ export const SalesOrderSchema = new Schema(
     timestamps: true,
   },
 );
-

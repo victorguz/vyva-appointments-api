@@ -20,10 +20,10 @@
     "logs:prd": "serverless logs -t -f api --stage prd",
     "deploy:qas": "nest build && serverless deploy function -f api --stage qas",
     "deploy:prd": "nest build && serverless deploy function -f api --stage prd",
-    "deploy:all": "npm run deploy:qas && npm run deploy:prd",
+    "deploy:all": "nest build && serverless deploy function -f api --stage qas && serverless deploy function -f api --stage prd",
     "deploy:qas:force": "nest build && serverless deploy --stage qas",
     "deploy:prd:force": "nest build && serverless deploy --stage prd",
-    "deploy:all:force": "npm run deploy:qas:force && npm run deploy:prd:force",
+    "deploy:all:force": "nest build && serverless deploy --stage qas && serverless deploy --stage prd",
     "generate:layer": "node generate-layer.js"
   },
   "dependencies": {

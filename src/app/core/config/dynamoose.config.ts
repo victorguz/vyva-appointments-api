@@ -24,6 +24,7 @@ export const dynamooseConfig = (
       // Initialize debe estar en true para poder usar tablas existentes
       initialize: true,
       waitForActive: false,
+      throughput: 'ON_DEMAND',
     },
   };
 };

@@ -45,7 +45,7 @@ export class AppointmentsService extends TransactionSupport {
         idCustomer: body.idCustomer,
         idEmployee: body.idEmployee,
         status: AppointmentStatus.pending,
-        businessInfoId: user.businessInfoId,
+        idBusiness: user.idBusiness,
         createdBy: user.id,
       };
 
@@ -73,8 +73,8 @@ export class AppointmentsService extends TransactionSupport {
     filters?: ListAppointmentDto,
   ): Promise<GenericResponse<Appointment[]>> {
     try {
-      // Validate user and businessInfoId
-      if (!user || !user.businessInfoId) {
+      // Validate user and idBusiness
+      if (!user || !user.idBusiness) {
         throw new Error('MS014');
       }
 
@@ -91,7 +91,7 @@ export class AppointmentsService extends TransactionSupport {
 
         appointments = orderQuery.filter(
           (apt) =>
-            apt.businessInfoId === user.businessInfoId &&
+            apt.idBusiness === user.idBusiness &&
             (!filters.idCustomer || apt.idCustomer === filters.idCustomer) &&
             (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
             (!filters.status || apt.status === filters.status) &&
@@ -113,7 +113,7 @@ export class AppointmentsService extends TransactionSupport {
 
         appointments = customerQuery.filter(
           (apt) =>
-            apt.businessInfoId === user.businessInfoId &&
+            apt.idBusiness === user.idBusiness &&
             (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
             (!filters.status || apt.status === filters.status) &&
             (!filters.startDate ||
@@ -134,7 +134,7 @@ export class AppointmentsService extends TransactionSupport {
 
         appointments = employeeQuery.filter(
           (apt) =>
-            apt.businessInfoId === user.businessInfoId &&
+            apt.idBusiness === user.idBusiness &&
             (!filters.status || apt.status === filters.status) &&
             (!filters.startDate ||
               new Date(apt.startDate).getTime() >=
@@ -154,7 +154,7 @@ export class AppointmentsService extends TransactionSupport {
 
         appointments = statusQuery.filter(
           (apt) =>
-            apt.businessInfoId === user.businessInfoId &&
+            apt.idBusiness === user.idBusiness &&
             (!filters.startDate ||
               new Date(apt.startDate).getTime() >=
                 new Date(filters.startDate).getTime()) &&
@@ -163,12 +163,12 @@ export class AppointmentsService extends TransactionSupport {
                 new Date(filters.endDate).getTime()),
         );
       }
-      // Si no hay filtros específicos, usar businessInfo-index como base
+      // Si no hay filtros específicos, usar idBusiness-index como base
       else {
         const businessQuery = await this.model
-          .query('businessInfoId')
-          .using('businessInfo-index')
-          .eq(user.businessInfoId)
+          .query('idBusiness')
+          .using('idBusiness-index')
+          .eq(user.idBusiness)
           .exec();
 
         appointments = businessQuery.filter((apt) => {
@@ -232,7 +232,7 @@ export class AppointmentsService extends TransactionSupport {
       }
 
       // Validar que pertenece al negocio del usuario
-      if (appointment.businessInfoId !== user.businessInfoId) {
+      if (appointment.idBusiness !== user.idBusiness) {
         throw new Error('MS007');
       }
 
@@ -308,9 +308,9 @@ export class AppointmentsService extends TransactionSupport {
 
       // If user is provided, validate ownership
       if (user) {
-        // If user has businessInfoId, they're a business user - validate business ownership
-        if (user.businessInfoId) {
-          if (appointment.businessInfoId !== user.businessInfoId) {
+        // If user has idBusiness, they're a business user - validate business ownership
+        if (user.idBusiness) {
+          if (appointment.idBusiness !== user.idBusiness) {
             throw new Error('MS007');
           }
         } else {
@@ -347,7 +347,6 @@ export class AppointmentsService extends TransactionSupport {
       throw handleError(error);
     }
   }
-
 
   async remove(id: string): Promise<GenericResponse<boolean>> {
     try {

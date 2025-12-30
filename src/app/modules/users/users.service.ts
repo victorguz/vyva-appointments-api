@@ -12,13 +12,12 @@ export class UsersService {
     private readonly model: Model<User, UserKey>,
   ) {}
 
-  async findOne(id: string, currentUser?: User): Promise<GenericResponse<User>> {
+  async findOne(
+    id: string,
+    currentUser?: User,
+  ): Promise<GenericResponse<User>> {
     try {
-      const user = await this.model
-        .scan()
-        .where('id')
-        .eq(id)
-        .exec();
+      const user = await this.model.scan().where('id').eq(id).exec();
       if (!user || user.length === 0) {
         throw new Error('MS007');
       }
@@ -30,12 +29,12 @@ export class UsersService {
     }
   }
 
-  async findEmployees(businessInfoId: string): Promise<GenericResponse<User[]>> {
+  async findEmployees(idBusiness: string): Promise<GenericResponse<User[]>> {
     try {
       const users = await this.model
         .scan()
-        .where('businessInfoId')
-        .eq(businessInfoId)
+        .where('idBusiness')
+        .eq(idBusiness)
         .exec();
       const employees = users.map((user) => {
         const userData = user.toJSON() as User;
@@ -48,4 +47,3 @@ export class UsersService {
     }
   }
 }
-

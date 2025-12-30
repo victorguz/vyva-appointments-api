@@ -22,7 +22,7 @@ export interface User extends UserKey {
   address?: string;
   googleId?: string;
   profilePicture?: string;
-  businessInfoId?: string;
+  idBusiness?: string;
   specialty?: string;
   profile?: string;
   data?: any;
@@ -121,12 +121,12 @@ export const UserSchema = new Schema(
       type: String,
       required: false,
     },
-    businessInfoId: {
+    idBusiness: {
       type: String,
-      required: true,
+      required: false,
       index: {
         type: 'global',
-        name: 'businessInfo-index',
+        name: 'idBusiness-index',
       },
     },
     data: {

@@ -84,7 +84,7 @@ export class TimeslotsService {
       .scan()
       .where('id')
       .eq(serviceId)
-      .where('businessInfoId')
+      .where('idBusiness')
       .eq(businessId)
       .exec();
 
@@ -130,19 +130,25 @@ export class TimeslotsService {
     const startTimestamp = startDate.startOf('day').valueOf();
     const endTimestamp = endDate.valueOf();
 
-    const appointments = await this.appointmentModel
-      .scan()
-      .where('businessInfoId')
+    // OPTIMIZACIÓN: Usar query con GSI idBusiness-index en lugar de scan
+    const businessQuery = await this.appointmentModel
+      .query('idBusiness')
+      .using('idBusiness-index')
       .eq(businessId)
-      .where('startDate')
-      .ge(startTimestamp as any)
-      .where('startDate')
-      .le(endTimestamp as any)
-      .where('idEmployee')
-      .in(employeeIds)
       .exec();
 
-    return appointments.map((appt) => appt.toJSON() as Appointment);
+    // Filtrar por startDate (rango) e idEmployee en memoria
+    const appointments = businessQuery
+      .filter((apt) => {
+        const aptStartDate = new Date(apt.startDate).getTime();
+        const startDateMatch =
+          aptStartDate >= startTimestamp && aptStartDate <= endTimestamp;
+        const employeeMatch = employeeIds.includes(apt.idEmployee);
+        return startDateMatch && employeeMatch;
+      })
+      .map((appt) => appt.toJSON() as Appointment);
+
+    return appointments;
   }
 
   /**

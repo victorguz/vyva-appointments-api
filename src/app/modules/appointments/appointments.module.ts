@@ -37,6 +37,7 @@ import { LambdaInvokeService } from '../shared/lambda-invoke.service';
         schema: AppointmentSchema,
         options: {
           tableName: 'appointments',
+          throughput: 'ON_DEMAND',
         },
       },
       {
@@ -44,6 +45,7 @@ import { LambdaInvokeService } from '../shared/lambda-invoke.service';
         schema: UserSchema,
         options: {
           tableName: 'users',
+          throughput: 'ON_DEMAND',
         },
       },
       {
@@ -51,6 +53,7 @@ import { LambdaInvokeService } from '../shared/lambda-invoke.service';
         schema: BusinessSchema,
         options: {
           tableName: 'businesses',
+          throughput: 'ON_DEMAND',
         },
       },
       {
@@ -58,6 +61,7 @@ import { LambdaInvokeService } from '../shared/lambda-invoke.service';
         schema: ProductSchema,
         options: {
           tableName: 'products',
+          throughput: 'ON_DEMAND',
         },
       },
     ]),
