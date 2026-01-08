@@ -15,6 +15,8 @@ import {
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
 } from './dto/appointments.dto';
+import { SalesOrder, SalesOrderKey } from 'src/app/schemas/sales-order.schema';
+import { SalesOrdersService } from '../sales-orders/sales-orders.service';
 
 @Injectable()
 export class AppointmentsService extends TransactionSupport {
@@ -22,50 +24,11 @@ export class AppointmentsService extends TransactionSupport {
     private readonly lambdaInvokeService: LambdaInvokeService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
+    @InjectModel('SalesOrder')
+    private readonly salesOrderModel: Model<SalesOrder, SalesOrderKey>,
+    private readonly salesOrderService: SalesOrdersService,
   ) {
     super();
-  }
-
-  async create(
-    body: CreateAppointmentDto,
-    user: User,
-  ): Promise<GenericResponse<Appointment>> {
-    try {
-      if (!body.startDate || !body.endDate) {
-        throw new Error('MS014'); // Start and end dates are required
-      }
-
-      this.validateAppointmentDates(body.startDate, body.endDate);
-
-      const appointment = {
-        id: uuidv4(),
-        startDate: new Date(body.startDate).getTime() as any,
-        endDate: new Date(body.endDate).getTime() as any,
-        idService: body.idService,
-        idCustomer: body.idCustomer,
-        idEmployee: body.idEmployee,
-        status: AppointmentStatus.pending,
-        idBusiness: user.idBusiness,
-        createdBy: user.id,
-      };
-
-      const cleanedPayload = deleteEmptyProperties(appointment);
-
-      await this.model.create(cleanedPayload);
-
-      const appointmentResult = await this.model.get({ id: appointment.id });
-      const appointmentData = appointmentResult.toJSON() as Appointment;
-
-      // Invoke Lambda to sync with Google Calendar asynchronously
-      await this.lambdaInvokeService.invokeGoogleCalendarSync(
-        appointmentData,
-        'create',
-      );
-
-      return new GenericResponse(appointmentData);
-    } catch (error) {
-      throw handleError(error);
-    }
   }
 
   async findAll(
@@ -208,6 +171,73 @@ export class AppointmentsService extends TransactionSupport {
         .exec();
 
       return new GenericResponse(customerQuery);
+    } catch (error) {
+      throw handleError(error);
+    }
+  }
+
+  async create(
+    body: CreateAppointmentDto,
+    user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    try {
+      if (!body.startDate || !body.endDate) {
+        throw new Error('MS014'); // Start and end dates are required
+      }
+
+      this.validateAppointmentDates(body.startDate, body.endDate);
+
+      const appointment = {
+        id: uuidv4(),
+        startDate: new Date(body.startDate).getTime() as any,
+        endDate: new Date(body.endDate).getTime() as any,
+        idService: body.idService,
+        idCustomer: body.idCustomer,
+        idEmployee: body.idEmployee,
+        status: AppointmentStatus.pending,
+        idBusiness: user.idBusiness,
+        createdBy: user.id,
+      };
+
+      const salesOrder: SalesOrder =
+        await this.salesOrderService.createOrderObject(
+          {
+            idCustomer: body.idCustomer,
+            products: [
+              {
+                id: body.idService,
+                quantity: 1,
+              },
+            ],
+            paymentMethods: body.paymentMethods,
+          },
+          user,
+        );
+
+      const cleanedPayload = deleteEmptyProperties({
+        ...appointment,
+        idOrder: salesOrder.id,
+      });
+      // await this.model.create(cleanedPayload);
+
+      // const appointmentResult = await this.model.get({ id: appointment.id });
+      // const appointmentData = appointmentResult.toJSON() as Appointment;
+
+      // Invoke Lambda to sync with Google Calendar asynchronously
+      // await this.lambdaInvokeService.invokeGoogleCalendarSync(
+      //   appointmentData,
+      //   'create',
+      // );
+      const response = this.transaction([
+        this.model.transaction.create(cleanedPayload),
+        this.salesOrderModel.transaction.create(salesOrder),
+      ]);
+
+      const appointmentData = await this.model.get({ id: appointment.id });
+      if (!appointmentData) {
+        throw new Error('MS007');
+      }
+      return new GenericResponse(appointmentData.toJSON() as Appointment);
     } catch (error) {
       throw handleError(error);
     }

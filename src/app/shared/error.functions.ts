@@ -95,20 +95,7 @@ export function handleError(
     finalStatus: status,
   };
 
-  // Siempre loguear el error completo en console para CloudWatch
-  console.error('[handleError] Error:', JSON.stringify(errorDetails, null, 2));
-
-  if (!isProduction) {
-    console.error(
-      `[handleError] Error: ${errorMessage}`,
-      (error as any)?.stack,
-    );
-  } else {
-    console.error(
-      `[handleError] Error en producción - Tipo: ${errorType}`,
-      error,
-    );
-  }
+  console.error('[handleError] Error:', error);
 
   // Si el error no fue manejado, siempre usar MS027
   if (!handledError) {

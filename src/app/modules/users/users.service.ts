@@ -4,6 +4,7 @@ import { InjectModel, Model } from 'nestjs-dynamoose';
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { User, UserKey } from '../../schemas/user.schema';
 import { handleError } from '../../shared/error.functions';
+import { UserRole } from 'src/app/core/constants/domain.constants';
 
 @Injectable()
 export class UsersService {
@@ -32,16 +33,14 @@ export class UsersService {
   async findEmployees(idBusiness: string): Promise<GenericResponse<User[]>> {
     try {
       const users = await this.model
-        .scan()
-        .where('idBusiness')
+        .query('idBusiness')
         .eq(idBusiness)
+        .where('role')
+        .eq(UserRole.employee)
+        .where('status')
+        .eq(true)
         .exec();
-      const employees = users.map((user) => {
-        const userData = user.toJSON() as User;
-        delete userData.password;
-        return userData;
-      });
-      return new GenericResponse(employees);
+      return new GenericResponse(users);
     } catch (error) {
       throw handleError(error);
     }

@@ -115,19 +115,19 @@ functions:
               - Authorization
             allowCredentials: true
 
-resources:
-  Resources:
-    AppointmentsTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:provider.stage}-vyva-appointments
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
+# resources:
+#   Resources:
+#     AppointmentsTable:
+#       Type: AWS::DynamoDB::Table
+#       Properties:
+#         TableName: ${self:provider.stage}-vyva-appointments
+#         BillingMode: PAY_PER_REQUEST
+#         AttributeDefinitions:
+#           - AttributeName: id
+#             AttributeType: S
+#         KeySchema:
+#           - AttributeName: id
+#             KeyType: HASH
 
 package:
   excludeDevDependencies: true

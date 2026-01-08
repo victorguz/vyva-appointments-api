@@ -1,4 +1,5 @@
 import { Schema } from 'dynamoose';
+import { Environment } from '../core/config/environment.config';
 
 export interface UserKey {
   id: string;
@@ -126,7 +127,7 @@ export const UserSchema = new Schema(
       required: false,
       index: {
         type: 'global',
-        name: 'idBusiness-index',
+        name: 'businessInfo-index',
       },
     },
     data: {

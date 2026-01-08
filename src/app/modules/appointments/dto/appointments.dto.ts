@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
@@ -13,7 +13,7 @@ import {
 import { AppointmentStatus } from '../../../core/constants/domain.constants';
 import { SalesOrderPaymentMethodDto } from './payment-method.dto';
 
-export class CreateAppointmentDto {
+export class CreatePublicAppointmentDto {
   @ApiProperty({ description: 'Appointment start date and time' })
   @IsDateString()
   @IsNotEmpty()
@@ -71,6 +71,68 @@ export class CreateAppointmentDto {
   idBusiness?: string;
 }
 
+export class CreateAppointmentDto {
+  @ApiProperty({ description: 'Appointment ID' })
+  @IsString()
+  @IsOptional()
+  id?: string;
+
+  @ApiProperty({ description: 'Customer ID' })
+  @IsString()
+  @IsOptional()
+  idCustomer?: string;
+
+  @ApiProperty({ description: 'Appointment start date and time' })
+  @IsDateString()
+  @IsNotEmpty()
+  startDate: string;
+
+  @ApiProperty({ description: 'Appointment end date and time' })
+  @IsDateString()
+  @IsNotEmpty()
+  endDate: string;
+
+  @ApiProperty({ description: 'Service ID' })
+  @IsString()
+  @IsNotEmpty()
+  idService: string;
+
+  @ApiProperty({ description: 'Employee ID' })
+  @IsString()
+  @IsOptional()
+  idEmployee?: string;
+
+  @ApiProperty({ description: 'Order ID' })
+  @IsString()
+  @IsOptional()
+  idOrder: string;
+
+  @ApiProperty({
+    description:
+      'Payment methods for the order (handled in frontend after appointment creation)',
+    type: [SalesOrderPaymentMethodDto],
+    required: false,
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SalesOrderPaymentMethodDto)
+  @IsOptional()
+  paymentMethods?: SalesOrderPaymentMethodDto[];
+
+  @ApiProperty({
+    description: 'Appointment status',
+    enum: AppointmentStatus,
+    default: AppointmentStatus.pending,
+  })
+  @IsEnum(AppointmentStatus)
+  @IsOptional()
+  status?: AppointmentStatus;
+
+  @ApiProperty({ description: 'Business Info ID (for public appointments)' })
+  @IsString()
+  @IsOptional()
+  idBusiness?: string;
+}
 export class UpdateAppointmentDto {
   @ApiProperty({ description: 'Appointment start date and time' })
   @IsDateString()

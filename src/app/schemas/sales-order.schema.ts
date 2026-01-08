@@ -9,11 +9,11 @@ export interface SalesOrderKey {
 
 export interface SalesOrderItem {
   id: string;
-  quantity: number;
-  isSubscription?: boolean;
-  isService?: boolean;
-  price: number;
+  name?: string;
+  price?: number;
   offerPrice?: number;
+  quantity: number;
+  commission?: number;
 }
 
 export interface SalesOrderPaymentMethod {
@@ -22,20 +22,53 @@ export interface SalesOrderPaymentMethod {
 }
 
 export interface SalesOrder extends SalesOrderKey {
+  idBusiness?: string;
+  idCustomer?: string;
   orderNumber: string;
-  idCustomer: string;
   products: SalesOrderItem[];
   paymentMethods: SalesOrderPaymentMethod[];
+
+  /** monto total de la orden sin descuentos aplicados */
+  subTotalAmount: number;
+  /** monto total de la orden con descuentos aplicados */
   totalAmount: number;
+  /** monto pagado por el cliente */
   paidAmount: number;
+
   status: string;
-  idBusiness?: string;
   createdBy?: string;
   modifiedBy?: string;
   createdAt: Date;
   updatedAt: Date;
+
+  // data for statistics
+
+  /** descuentos totales del total amount */
+  totalDiscounts: number;
+  /** descuentos pagados del total amount */
+  paidDiscounts: number;
+
+  /** Comisiones totales del total amount */
+  totalCommissions: number;
+  /** comisiones pagadas del total amount */
+  paidCommissions: number;
+
+  /** ingresos totales de la orden: lo que se gana por la venta */
+  totalIncome: number;
+  /** ingresos pagados de la orden: lo que se gana por la venta pagado por el cliente */
+  paidIncome: number;
+  /** costos totales de la orden: lo que se gasta por la venta */
+  totalCosts: number;
+  /** costos pagados de la orden: lo que se gasta por la venta pagado por el cliente */
+  paidCosts: number;
 }
 
+export interface SalesOrderListResponse {
+  salesOrders: SalesOrder[];
+  totalPages: number;
+  totalItems: number;
+  lastKey?: string;
+}
 export const SalesOrderSchema = new Schema(
   {
     id: {
@@ -67,7 +100,6 @@ export const SalesOrderSchema = new Schema(
           schema: {
             id: { type: String, required: true },
             quantity: { type: Number, required: true },
-            isSubscription: { type: Boolean, required: true },
             price: { type: Number, required: true },
             offerPrice: { type: Number, required: false },
           },
@@ -91,6 +123,10 @@ export const SalesOrderSchema = new Schema(
       ],
       required: true,
     },
+    subTotalAmount: {
+      type: Number,
+      required: true,
+    },
     totalAmount: {
       type: Number,
       required: true,
@@ -108,7 +144,7 @@ export const SalesOrderSchema = new Schema(
       required: false,
       index: {
         type: 'global',
-        name: 'idBusiness-index',
+        name: 'businessInfo-index',
       },
     },
     createdBy: {
@@ -117,6 +153,31 @@ export const SalesOrderSchema = new Schema(
     },
     modifiedBy: {
       type: String,
+      required: false,
+    },
+
+    totalDiscounts: {
+      type: Number,
+      required: false,
+    },
+    totalCommissions: {
+      type: Number,
+      required: false,
+    },
+    totalIncome: {
+      type: Number,
+      required: false,
+    },
+    totalCosts: {
+      type: Number,
+      required: false,
+    },
+    paidDiscounts: {
+      type: Number,
+      required: false,
+    },
+    paidCommissions: {
+      type: Number,
       required: false,
     },
   },

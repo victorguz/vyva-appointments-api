@@ -5,8 +5,6 @@ import { AppointmentsController } from './appointments.controller';
 import { AppointmentsService } from './appointments.service';
 import { ProductSchema } from 'src/app/schemas/product.schema';
 import { UserSchema } from 'src/app/schemas/user.schema';
-import { CustomersService } from '../customers/customers.service';
-import { ProductsService } from '../products/products.service';
 import { UsersService } from '../users/users.service';
 import { TimeslotsController } from './timeslots/timeslots.controller';
 import { TimeslotsService } from './timeslots/timeslots.service';
@@ -46,6 +44,7 @@ import { LambdaInvokeService } from '../shared/lambda-invoke.service';
         options: {
           tableName: 'users',
           throughput: 'ON_DEMAND',
+          create: false,
         },
       },
       {
@@ -54,6 +53,7 @@ import { LambdaInvokeService } from '../shared/lambda-invoke.service';
         options: {
           tableName: 'businesses',
           throughput: 'ON_DEMAND',
+          create: false,
         },
       },
       {
@@ -62,6 +62,7 @@ import { LambdaInvokeService } from '../shared/lambda-invoke.service';
         options: {
           tableName: 'products',
           throughput: 'ON_DEMAND',
+          create: false,
         },
       },
     ]),
