@@ -197,6 +197,8 @@ export class AppointmentsService extends TransactionSupport {
         status: AppointmentStatus.pending,
         idBusiness: user.idBusiness,
         createdBy: user.id,
+        googleCalendarId: body.googleCalendarId,
+        googleCalendarEventId: body.googleCalendarEventId,
       };
 
       const salesOrder: SalesOrder =
@@ -237,9 +239,65 @@ export class AppointmentsService extends TransactionSupport {
       if (!appointmentData) {
         throw new Error('MS007');
       }
+
+      // Sync with Google Calendar if integration is active
+      try {
+        await this.syncAppointmentToGoogleCalendar(
+          appointmentData.toJSON() as Appointment,
+          user,
+        );
+      } catch (error) {
+        console.error('[create] Failed to sync with Google Calendar:', error);
+        // Don't fail appointment creation if Google sync fails
+      }
+
       return new GenericResponse(appointmentData.toJSON() as Appointment);
     } catch (error) {
       throw handleError(error);
+    }
+  }
+
+  /**
+   * Sync appointment to Google Calendar Vyva calendar
+   */
+  private async syncAppointmentToGoogleCalendar(
+    appointment: Appointment,
+    user: User,
+  ): Promise<void> {
+    try {
+      // Call integrations-api to create event in Vyva calendar
+      const result = await this.lambdaInvokeService.invokeFunction(
+        'vyva-integrations',
+        'POST',
+        '/api/integrations/google-calendar/events/vyva',
+        {
+          summary: `Cita - ${appointment.idService}`,
+          description: `Appointment ID: ${appointment.id}`,
+          start: {
+            dateTime: new Date(appointment.startDate).toISOString(),
+            timeZone: 'America/Bogota',
+          },
+          end: {
+            dateTime: new Date(appointment.endDate).toISOString(),
+            timeZone: 'America/Bogota',
+          },
+        },
+        user,
+      );
+
+      if (result.data?.eventId) {
+        // Update appointment with Google event ID
+        await this.model.update(
+          { id: appointment.id },
+          {
+            googleCalendarEventId: result.data.eventId,
+          },
+        );
+        console.log('[syncAppointmentToGoogleCalendar] Synced successfully');
+      }
+    } catch (error) {
+      console.error('[syncAppointmentToGoogleCalendar] Error:', error);
+      throw error;
     }
   }
 

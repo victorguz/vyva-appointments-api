@@ -20,6 +20,8 @@ export interface Appointment extends AppointmentKey {
   modifiedBy?: string;
   createdAt?: Date;
   updatedAt?: Date;
+  googleCalendarId?: string;
+  googleCalendarEventId?: string;
 }
 
 export const AppointmentSchema = new Schema(
@@ -89,6 +91,18 @@ export const AppointmentSchema = new Schema(
     modifiedBy: {
       type: String,
       required: false,
+    },
+    googleCalendarId: {
+      type: String,
+      required: false,
+    },
+    googleCalendarEventId: {
+      type: String,
+      required: false,
+      index: {
+        type: 'global',
+        name: 'googleEvent-index',
+      },
     },
   },
   {

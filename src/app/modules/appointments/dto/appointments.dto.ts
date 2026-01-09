@@ -132,6 +132,16 @@ export class CreateAppointmentDto {
   @IsString()
   @IsOptional()
   idBusiness?: string;
+
+  @ApiProperty({ description: 'Google Calendar ID (if linked)' })
+  @IsString()
+  @IsOptional()
+  googleCalendarId?: string;
+
+  @ApiProperty({ description: 'Google Calendar Event ID (if linked)' })
+  @IsString()
+  @IsOptional()
+  googleCalendarEventId?: string;
 }
 export class UpdateAppointmentDto {
   @ApiProperty({ description: 'Appointment start date and time' })
@@ -186,6 +196,16 @@ export class UpdateAppointmentDto {
   @IsString()
   @IsOptional()
   modifiedBy?: string;
+
+  @ApiProperty({ description: 'Google Calendar ID (if linked)' })
+  @IsString()
+  @IsOptional()
+  googleCalendarId?: string;
+
+  @ApiProperty({ description: 'Google Calendar Event ID (if linked)' })
+  @IsString()
+  @IsOptional()
+  googleCalendarEventId?: string;
 }
 
 export class ListAppointmentDto {
