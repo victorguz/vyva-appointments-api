@@ -17,6 +17,7 @@ import {
   SalesOrderListResponse,
 } from '../../schemas/sales-order.schema';
 import { handleError } from '../../shared/error.functions';
+import { sanitizeObjectForDynamoDB } from '../../shared/shared.functions';
 import {
   CreateSalesOrderDto,
   DailyPaymentMethodsResponseDto,
@@ -100,35 +101,36 @@ export class SalesOrdersService extends TransactionSupport {
       productDetails,
       body.paymentMethods,
     );
-    const salesOrder: SalesOrder = {
-      id: uuidv4(),
-      subTotalAmount,
-      totalDiscounts,
-      totalCommissions,
-      totalIncome,
-      paidDiscounts,
-      paidCommissions,
-      paidIncome,
-      totalCosts,
-      paidCosts,
-      orderNumber,
-      idCustomer: body.idCustomer,
-      products: productDetails,
-      paymentMethods: body.paymentMethods,
-      paidAmount,
-      totalAmount,
-      status:
-        paidAmount === 0
-          ? SalesOrderStatus.pending
-          : paidAmount === totalAmount
-          ? SalesOrderStatus.paid
-          : SalesOrderStatus.partiallyPaid,
-      idBusiness: user.idBusiness,
-      createdBy: user.id,
-      createdAt: now,
-      updatedAt: now,
-    };
-    return salesOrder;
+      const salesOrder: SalesOrder = {
+        id: uuidv4(),
+        subTotalAmount,
+        totalDiscounts,
+        totalCommissions,
+        totalIncome,
+        paidDiscounts,
+        paidCommissions,
+        paidIncome,
+        totalCosts,
+        paidCosts,
+        orderNumber,
+        idCustomer: body.idCustomer,
+        products: productDetails,
+        paymentMethods: body.paymentMethods,
+        paidAmount,
+        totalAmount,
+        status:
+          paidAmount === 0
+            ? SalesOrderStatus.pending
+            : paidAmount === totalAmount
+            ? SalesOrderStatus.paid
+            : SalesOrderStatus.partiallyPaid,
+        idBusiness: user.idBusiness,
+        createdBy: user.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Sanitize the sales order to prevent Infinity or NaN values
+      return sanitizeObjectForDynamoDB(salesOrder) as SalesOrder;
   }
   async update(
     id: string,
@@ -362,6 +364,9 @@ export class SalesOrdersService extends TransactionSupport {
     const totalAmount = this.calculateTotalAmount(productDetails);
     const paidAmount = this.calculatePaidAmount(paymentMethods);
     const totalCommission = this.calculateTotalCommission(productDetails);
+    if (totalAmount === 0) {
+      return 0;
+    }
     const percentageCommission = totalCommission / totalAmount;
     const paidCommission = percentageCommission * paidAmount;
     return paidCommission;
@@ -394,6 +399,9 @@ export class SalesOrdersService extends TransactionSupport {
   ): number {
     const totalIncome = this.calculateTotalIncome(productDetails);
     const paidAmount = this.calculatePaidAmount(paymentMethods);
+    if (totalIncome === 0) {
+      return 0;
+    }
     const percentageIncome = paidAmount / totalIncome;
     const paidIncome = percentageIncome * paidAmount;
     return paidIncome;
@@ -421,6 +429,9 @@ export class SalesOrdersService extends TransactionSupport {
   ): number {
     const totalAmount = this.calculateTotalAmount(productDetails);
     const paidAmount = this.calculatePaidAmount(paymentMethods);
+    if (paidAmount === 0) {
+      return 0;
+    }
     const percentageDiscounts = totalAmount / paidAmount;
     const paidDiscounts = percentageDiscounts * totalAmount;
     return paidDiscounts;
@@ -445,6 +456,9 @@ export class SalesOrdersService extends TransactionSupport {
   ): number {
     const totalCost = this.calculateTotalCost(productDetails);
     const paidAmount = this.calculatePaidAmount(paymentMethods);
+    if (totalCost === 0) {
+      return 0;
+    }
     const percentageCosts = paidAmount / totalCost;
     const paidCosts = percentageCosts * paidAmount;
     return paidCosts;

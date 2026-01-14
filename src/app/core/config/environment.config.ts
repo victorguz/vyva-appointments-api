@@ -15,7 +15,13 @@ export enum Environment {
   Production = 'prd',
   Quality = 'qas',
 }
-
+export const EnvironmentValues = {
+  domain: {
+    [Environment.Development]: 'http://localhost:4200',
+    [Environment.Quality]: 'https://qas.vyvapos.com',
+    [Environment.Production]: 'https://app.vyvapos.com',
+  },
+};
 export const JWT_EXPIRATION =
   process.env.NODE_ENV == Environment.Development ? '7d' : '24h';
 
@@ -51,9 +57,7 @@ export class EnvironmentVariables {
 }
 
 const validationSchema = Joi.object({
-  NODE_ENV: Joi.string()
-    .valid('dev', 'qas', 'prd')
-    .default('dev'),
+  NODE_ENV: Joi.string().valid('dev', 'qas', 'prd').default('dev'),
   PORT: Joi.number().default(3000),
   ERROR_LOGS: Joi.boolean().default(false),
   JWT_SECRET: Joi.string().required(),

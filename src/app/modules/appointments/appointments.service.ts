@@ -7,7 +7,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { handleError } from '../../shared/error.functions';
-import { deleteEmptyProperties } from '../../shared/shared.functions';
+import {
+  deleteEmptyProperties,
+  sanitizeNumericValue,
+} from '../../shared/shared.functions';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import {
   CreateAppointmentDto,
@@ -17,6 +20,7 @@ import {
 } from './dto/appointments.dto';
 import { SalesOrder, SalesOrderKey } from 'src/app/schemas/sales-order.schema';
 import { SalesOrdersService } from '../sales-orders/sales-orders.service';
+import { TransactionReturnOptions } from 'dynamoose/dist/Transaction';
 
 @Injectable()
 export class AppointmentsService extends TransactionSupport {
@@ -180,6 +184,7 @@ export class AppointmentsService extends TransactionSupport {
     body: CreateAppointmentDto,
     user: User,
   ): Promise<GenericResponse<Appointment>> {
+    let appointmentPayload;
     try {
       if (!body.startDate || !body.endDate) {
         throw new Error('MS014'); // Start and end dates are required
@@ -187,10 +192,23 @@ export class AppointmentsService extends TransactionSupport {
 
       this.validateAppointmentDates(body.startDate, body.endDate);
 
+      const startDateTimestamp = new Date(body.startDate).getTime();
+      const endDateTimestamp = new Date(body.endDate).getTime();
+
+      // Validate that dates are valid and not Infinity
+      if (
+        !isFinite(startDateTimestamp) ||
+        !isFinite(endDateTimestamp) ||
+        isNaN(startDateTimestamp) ||
+        isNaN(endDateTimestamp)
+      ) {
+        throw new Error('MS042'); // Invalid date format
+      }
+
       const appointment = {
         id: uuidv4(),
-        startDate: new Date(body.startDate).getTime() as any,
-        endDate: new Date(body.endDate).getTime() as any,
+        startDate: sanitizeNumericValue(startDateTimestamp) as any,
+        endDate: sanitizeNumericValue(endDateTimestamp) as any,
         idService: body.idService,
         idCustomer: body.idCustomer,
         idEmployee: body.idEmployee,
@@ -216,7 +234,7 @@ export class AppointmentsService extends TransactionSupport {
           user,
         );
 
-      const cleanedPayload = deleteEmptyProperties({
+      appointmentPayload = deleteEmptyProperties({
         ...appointment,
         idOrder: salesOrder.id,
       });
@@ -230,29 +248,22 @@ export class AppointmentsService extends TransactionSupport {
       //   appointmentData,
       //   'create',
       // );
-      const response = this.transaction([
-        this.model.transaction.create(cleanedPayload),
+      await this.transaction([
+        this.model.transaction.create(appointmentPayload),
         this.salesOrderModel.transaction.create(salesOrder),
       ]);
 
       const appointmentData = await this.model.get({ id: appointment.id });
-      if (!appointmentData) {
-        throw new Error('MS007');
-      }
-
-      // Sync with Google Calendar if integration is active
-      try {
-        await this.syncAppointmentToGoogleCalendar(
-          appointmentData.toJSON() as Appointment,
-          user,
-        );
-      } catch (error) {
-        console.error('[create] Failed to sync with Google Calendar:', error);
-        // Don't fail appointment creation if Google sync fails
-      }
-
-      return new GenericResponse(appointmentData.toJSON() as Appointment);
+      await this.syncAppointmentToGoogleCalendar(
+        appointmentData.toJSON() as Appointment,
+        user,
+      );
+      return new GenericResponse(appointmentData);
     } catch (error) {
+      if (appointmentPayload) await this.model.delete(appointmentPayload);
+      if (appointmentPayload?.idOrder)
+        await this.salesOrderModel.delete({ id: appointmentPayload.idOrder });
+
       throw handleError(error);
     }
   }
@@ -323,50 +334,60 @@ export class AppointmentsService extends TransactionSupport {
       if (appointment.idBusiness !== user.idBusiness) {
         throw new Error('MS007');
       }
-
+      this.validateAppointmentDates(
+        updateAppointmentDto.startDate,
+        updateAppointmentDto.endDate,
+      );
       // Remove paymentMethods from update - no longer handled here
       const cleanedUpdateDto = deleteEmptyProperties(updateAppointmentDto);
       const { paymentMethods, ...cleanedDto } = cleanedUpdateDto as any;
 
       // Handle date conversions and validation
-      if (cleanedDto.startDate) {
-        cleanedDto.startDate = new Date(cleanedDto.startDate) as any;
-      }
-      if (cleanedDto.endDate) {
-        cleanedDto.endDate = new Date(cleanedDto.endDate) as any;
-      }
+      // if (cleanedDto.startDate) {
+      //   const startDateTimestamp = new Date(cleanedDto.startDate).getTime();
+      //   if (!isFinite(startDateTimestamp) || isNaN(startDateTimestamp)) {
+      //     throw new Error('MS042'); // Invalid date format
+      //   }
+      //   cleanedDto.startDate = sanitizeNumericValue(startDateTimestamp) as any;
+      // }
+      // if (cleanedDto.endDate) {
+      //   const endDateTimestamp = new Date(cleanedDto.endDate).getTime();
+      //   if (!isFinite(endDateTimestamp) || isNaN(endDateTimestamp)) {
+      //     throw new Error('MS042'); // Invalid date format
+      //   }
+      //   cleanedDto.endDate = sanitizeNumericValue(endDateTimestamp) as any;
+      // }
 
-      // Validate dates if both are provided
-      if (cleanedDto.startDate && cleanedDto.endDate) {
-        this.validateAppointmentDates(
-          cleanedDto.startDate.toString(),
-          cleanedDto.endDate.toString(),
-        );
-      }
+      // // Validate dates if both are provided
+      // if (cleanedDto.startDate && cleanedDto.endDate) {
+      //   this.validateAppointmentDates(
+      //     cleanedDto.startDate.toString(),
+      //     cleanedDto.endDate.toString(),
+      //   );
+      // }
 
       // Update appointment fields if there are any changes
-      if (Object.keys(cleanedDto).length > 0) {
-        await this.model.update(
+      const response = await this.transaction([
+        this.model.transaction.update(
           { id: appointment.id },
           { ...cleanedDto, modifiedBy: user.id },
-        );
-      }
+        ),
+        this.salesOrderModel.transaction.update(
+          { id: appointment.idOrder },
+          { ...cleanedDto, modifiedBy: user.id },
+        ),
+      ]);
 
-      // Return updated appointment
-      const updatedAppointment = await this.model.get({ id: appointment.id });
-
-      if (!updatedAppointment) {
-        throw new Error('MS007');
-      }
-
-      const appointmentData = updatedAppointment.toJSON() as Appointment;
-
-      // Invoke Lambda to sync with Google Calendar asynchronously
-      await this.lambdaInvokeService.invokeGoogleCalendarSync(
-        appointmentData,
-        'update',
-      );
-
+      const appointmentData = response.data[0].toJSON() as Appointment;
+      //  try {
+      //    await this.syncAppointmentToGoogleCalendar(
+      //      appointmentData.toJSON() as Appointment,
+      //      user,
+      //    );
+      //  } catch (error) {
+      //    console.error('[create] Failed to sync with Google Calendar:', error);
+      //    // Don't fail appointment creation if Google sync fails
+      //  }
       return new GenericResponse(appointmentData);
     } catch (error) {
       throw handleError(error);
@@ -453,7 +474,11 @@ export class AppointmentsService extends TransactionSupport {
   private validateAppointmentDates(startDate: string, endDate: string): void {
     const start = new Date(startDate);
     const end = new Date(endDate);
-
+    console.log('start', start);
+    console.log('end', end);
+    console.log('isNaN(start.getTime())', isNaN(start.getTime()));
+    console.log('isNaN(end.getTime())', isNaN(end.getTime()));
+    console.log('start >= end', start >= end);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       throw new Error('MS042');
     }
@@ -461,5 +486,6 @@ export class AppointmentsService extends TransactionSupport {
     if (start >= end) {
       throw new Error('MS041');
     }
+    console.log('validateAppointmentDates');
   }
 }

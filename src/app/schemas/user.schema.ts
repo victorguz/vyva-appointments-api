@@ -1,5 +1,4 @@
 import { Schema } from 'dynamoose';
-import { Environment } from '../core/config/environment.config';
 
 export interface UserKey {
   id: string;

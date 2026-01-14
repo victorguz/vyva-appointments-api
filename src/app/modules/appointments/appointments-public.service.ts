@@ -7,7 +7,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { handleError } from '../../shared/error.functions';
-import { deleteEmptyProperties } from '../../shared/shared.functions';
+import {
+  deleteEmptyProperties,
+  sanitizeNumericValue,
+} from '../../shared/shared.functions';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import {
   CreateAppointmentDto,
@@ -40,10 +43,23 @@ export class AppointmentsPublicService extends TransactionSupport {
 
       this.validateAppointmentDates(body.startDate, body.endDate);
 
+      const startDateTimestamp = new Date(body.startDate).getTime();
+      const endDateTimestamp = new Date(body.endDate).getTime();
+
+      // Validate that dates are valid and not Infinity
+      if (
+        !isFinite(startDateTimestamp) ||
+        !isFinite(endDateTimestamp) ||
+        isNaN(startDateTimestamp) ||
+        isNaN(endDateTimestamp)
+      ) {
+        throw new Error('MS042'); // Invalid date format
+      }
+
       const appointment = {
         id: uuidv4(),
-        startDate: new Date(body.startDate).getTime() as any,
-        endDate: new Date(body.endDate).getTime() as any,
+        startDate: sanitizeNumericValue(startDateTimestamp) as any,
+        endDate: sanitizeNumericValue(endDateTimestamp) as any,
         idService: body.idService,
         idCustomer: body.idCustomer,
         idEmployee: body.idEmployee,

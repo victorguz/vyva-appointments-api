@@ -46,6 +46,7 @@ import { SalesOrdersService } from '../sales-orders/sales-orders.service';
         options: {
           tableName: 'sales-orders',
           throughput: 'ON_DEMAND',
+          create: false,
         },
       },
       {
