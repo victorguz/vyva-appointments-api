@@ -342,32 +342,24 @@ export class AppointmentsService extends TransactionSupport {
       const cleanedUpdateDto = deleteEmptyProperties(updateAppointmentDto);
       const { paymentMethods, ...cleanedDto } = cleanedUpdateDto as any;
 
-      // Handle date conversions and validation
-      // if (cleanedDto.startDate) {
-      //   const startDateTimestamp = new Date(cleanedDto.startDate).getTime();
-      //   if (!isFinite(startDateTimestamp) || isNaN(startDateTimestamp)) {
-      //     throw new Error('MS042'); // Invalid date format
-      //   }
-      //   cleanedDto.startDate = sanitizeNumericValue(startDateTimestamp) as any;
-      // }
-      // if (cleanedDto.endDate) {
-      //   const endDateTimestamp = new Date(cleanedDto.endDate).getTime();
-      //   if (!isFinite(endDateTimestamp) || isNaN(endDateTimestamp)) {
-      //     throw new Error('MS042'); // Invalid date format
-      //   }
-      //   cleanedDto.endDate = sanitizeNumericValue(endDateTimestamp) as any;
-      // }
-
-      // // Validate dates if both are provided
-      // if (cleanedDto.startDate && cleanedDto.endDate) {
-      //   this.validateAppointmentDates(
-      //     cleanedDto.startDate.toString(),
-      //     cleanedDto.endDate.toString(),
-      //   );
-      // }
+      // Handle date conversions - convert string dates to Date objects for Dynamoose
+      if (cleanedDto.startDate) {
+        const startDate = new Date(cleanedDto.startDate);
+        if (isNaN(startDate.getTime())) {
+          throw new Error('MS042'); // Invalid date format
+        }
+        cleanedDto.startDate = startDate;
+      }
+      if (cleanedDto.endDate) {
+        const endDate = new Date(cleanedDto.endDate);
+        if (isNaN(endDate.getTime())) {
+          throw new Error('MS042'); // Invalid date format
+        }
+        cleanedDto.endDate = endDate;
+      }
 
       // Update appointment fields if there are any changes
-      const response = await this.transaction([
+      await this.transaction([
         this.model.transaction.update(
           { id: appointment.id },
           { ...cleanedDto, modifiedBy: user.id },
@@ -378,7 +370,7 @@ export class AppointmentsService extends TransactionSupport {
         ),
       ]);
 
-      const appointmentData = response.data[0].toJSON() as Appointment;
+      const appointmentData = await this.model.get({ id: appointment.id });
       //  try {
       //    await this.syncAppointmentToGoogleCalendar(
       //      appointmentData.toJSON() as Appointment,
@@ -390,6 +382,7 @@ export class AppointmentsService extends TransactionSupport {
       //  }
       return new GenericResponse(appointmentData);
     } catch (error) {
+
       throw handleError(error);
     }
   }
