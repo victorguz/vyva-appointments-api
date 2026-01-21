@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { AuthUser } from '../dtos/auth.dto';
@@ -22,11 +27,11 @@ export class AuthGuard implements CanActivate {
       throw handleError('MS019');
     }
     try {
-      // const payload: AuthUser = await this.jwtService.verifyAsync(token, {
-      //   secret: process.env.JWT_SECRET,
-      // });
-      // const user = await this.model.get({ id: payload.sub });
-      const user = await this.model.get({ id: "c8133285-9e16-4379-91b6-dbd8596effaa" });
+      const payload: AuthUser = await this.jwtService.verifyAsync(token, {
+        secret: process.env.JWT_SECRET,
+      });
+      const user = await this.model.get({ id: payload.sub });
+      // const user = await this.model.get({ id: "c8133285-9e16-4379-91b6-dbd8596effaa" });
       if (!user) {
         throw handleError('MS019');
       }
