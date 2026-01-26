@@ -64,10 +64,10 @@ export class AppointmentsService extends TransactionSupport {
             (!filters.status || apt.status === filters.status) &&
             (!filters.startDate ||
               new Date(apt.startDate).getTime() >=
-                new Date(filters.startDate).getTime()) &&
+              new Date(filters.startDate).getTime()) &&
             (!filters.endDate ||
               new Date(apt.endDate).getTime() <=
-                new Date(filters.endDate).getTime()),
+              new Date(filters.endDate).getTime()),
         );
       }
       // Si hay filtro por idCustomer, usar customer-index
@@ -85,10 +85,10 @@ export class AppointmentsService extends TransactionSupport {
             (!filters.status || apt.status === filters.status) &&
             (!filters.startDate ||
               new Date(apt.startDate).getTime() >=
-                new Date(filters.startDate).getTime()) &&
+              new Date(filters.startDate).getTime()) &&
             (!filters.endDate ||
               new Date(apt.endDate).getTime() <=
-                new Date(filters.endDate).getTime()),
+              new Date(filters.endDate).getTime()),
         );
       }
       // Si hay filtro por idEmployee, usar employee-index
@@ -105,10 +105,10 @@ export class AppointmentsService extends TransactionSupport {
             (!filters.status || apt.status === filters.status) &&
             (!filters.startDate ||
               new Date(apt.startDate).getTime() >=
-                new Date(filters.startDate).getTime()) &&
+              new Date(filters.startDate).getTime()) &&
             (!filters.endDate ||
               new Date(apt.endDate).getTime() <=
-                new Date(filters.endDate).getTime()),
+              new Date(filters.endDate).getTime()),
         );
       }
       // Si hay filtro por status, usar status-index
@@ -124,10 +124,10 @@ export class AppointmentsService extends TransactionSupport {
             apt.idBusiness === user.idBusiness &&
             (!filters.startDate ||
               new Date(apt.startDate).getTime() >=
-                new Date(filters.startDate).getTime()) &&
+              new Date(filters.startDate).getTime()) &&
             (!filters.endDate ||
               new Date(apt.endDate).getTime() <=
-                new Date(filters.endDate).getTime()),
+              new Date(filters.endDate).getTime()),
         );
       }
       // Si no hay filtros específicos, usar idBusiness-index como base
@@ -142,11 +142,11 @@ export class AppointmentsService extends TransactionSupport {
           const startDateMatch =
             !filters?.startDate ||
             new Date(apt.startDate).getTime() >=
-              new Date(filters.startDate).getTime();
+            new Date(filters.startDate).getTime();
           const endDateMatch =
             !filters?.endDate ||
             new Date(apt.endDate).getTime() <=
-              new Date(filters.endDate).getTime();
+            new Date(filters.endDate).getTime();
 
           return startDateMatch && endDateMatch;
         });
@@ -238,7 +238,7 @@ export class AppointmentsService extends TransactionSupport {
         ...appointment,
         idOrder: salesOrder.id,
       });
-    
+
       await this.transaction([
         this.model.transaction.create(appointmentPayload),
         this.salesOrderModel.transaction.create(salesOrder),
@@ -268,21 +268,13 @@ export class AppointmentsService extends TransactionSupport {
   ): Promise<void> {
     try {
       // Call integrations-api to create event in Vyva calendar
+      // Only send appointmentId, integrations-api will fetch all necessary data
       const result = await this.lambdaInvokeService.invokeFunction(
         'vyva-integrations',
         'POST',
         '/api/integrations/google-calendar/events/vyva',
         {
-          summary: `Cita - ${appointment.idService}`,
-          description: `Appointment ID: ${appointment.id}`,
-          start: {
-            dateTime: new Date(appointment.startDate).toISOString(),
-            timeZone: 'America/Bogota',
-          },
-          end: {
-            dateTime: new Date(appointment.endDate).toISOString(),
-            timeZone: 'America/Bogota',
-          },
+          appointmentId: appointment.id,
         },
         user,
       );
@@ -359,15 +351,15 @@ export class AppointmentsService extends TransactionSupport {
       ]);
 
       const appointmentData = await this.model.get({ id: appointment.id });
-       try {
-         await this.syncAppointmentToGoogleCalendar(
-           appointmentData.toJSON() as Appointment,
-           user,
-         );
-       } catch (error) {
-         console.error('[create] Failed to sync with Google Calendar:', error);
-         // Don't fail appointment creation if Google sync fails
-       }
+      try {
+        await this.syncAppointmentToGoogleCalendar(
+          appointmentData.toJSON() as Appointment,
+          user,
+        );
+      } catch (error) {
+        console.error('[create] Failed to sync with Google Calendar:', error);
+        // Don't fail appointment creation if Google sync fails
+      }
       return new GenericResponse(appointmentData);
     } catch (error) {
 

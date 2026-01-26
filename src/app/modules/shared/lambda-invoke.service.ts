@@ -93,7 +93,7 @@ export class LambdaInvokeService {
       // Generate JWT token for the user
       const token = jwt.sign(
         {
-          id: user.id,
+          sub: user.id, // Use 'sub' (subject) as per JWT standard
           idBusiness: user.idBusiness,
           email: user.email,
         },
@@ -127,7 +127,7 @@ export class LambdaInvokeService {
 
       if (response.Payload) {
         const payload = JSON.parse(Buffer.from(response.Payload).toString());
-        
+
         // Handle Lambda error response
         if (payload.errorMessage) {
           throw new Error(payload.errorMessage);
