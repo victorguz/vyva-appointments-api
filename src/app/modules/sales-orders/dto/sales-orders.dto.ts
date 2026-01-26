@@ -44,6 +44,21 @@ export class SalesOrderItemDto implements SalesOrderItem {
   @IsNumber()
   @IsOptional()
   offerPrice?: number;
+
+  @ApiProperty({ description: 'Product type' })
+  @IsString()
+  @IsOptional()
+  type?: string;
+
+  @ApiProperty({ description: 'Product commission' })
+  @IsNumber()
+  @IsOptional()
+  commission?: number;
+
+  @ApiProperty({ description: 'Product name' })
+  @IsString()
+  @IsOptional()
+  name?: string;
 }
 
 export class SalesOrderPaymentMethodDto {
@@ -146,9 +161,10 @@ export class ListSalesOrderDto {
   endDate?: Date;
 
   @ApiProperty({ description: 'Limit' })
+  @Type(() => Number)
   @IsNumber()
   @IsOptional()
-  limit?: number = 5;
+  limit?: number;
 
   @ApiProperty({ description: 'Last key' })
   @IsString()

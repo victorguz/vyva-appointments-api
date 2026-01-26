@@ -14,6 +14,8 @@ export interface SalesOrderItem {
   offerPrice?: number;
   quantity: number;
   commission?: number;
+  type?: string;
+  isService?: boolean;
 }
 
 export interface SalesOrderPaymentMethod {
@@ -27,7 +29,7 @@ export interface SalesOrder extends SalesOrderKey {
   orderNumber: string;
   products: SalesOrderItem[];
   paymentMethods: SalesOrderPaymentMethod[];
-
+  name: string;
   /** monto total de la orden sin descuentos aplicados */
   subTotalAmount: number;
   /** monto total de la orden con descuentos aplicados */
@@ -44,23 +46,28 @@ export interface SalesOrder extends SalesOrderKey {
   // data for statistics
 
   /** descuentos totales del total amount */
-  totalDiscounts: number;
+  totalDiscounts?: number;
   /** descuentos pagados del total amount */
-  paidDiscounts: number;
+  paidDiscounts?: number;
 
   /** Comisiones totales del total amount */
-  totalCommissions: number;
+  totalCommissions?: number;
   /** comisiones pagadas del total amount */
-  paidCommissions: number;
+  paidCommissions?: number;
 
   /** ingresos totales de la orden: lo que se gana por la venta */
-  totalIncome: number;
+  totalIncome?: number;
   /** ingresos pagados de la orden: lo que se gana por la venta pagado por el cliente */
-  paidIncome: number;
+  paidIncome?: number;
   /** costos totales de la orden: lo que se gasta por la venta */
-  totalCosts: number;
+  totalCosts?: number;
   /** costos pagados de la orden: lo que se gasta por la venta pagado por el cliente */
-  paidCosts: number;
+  paidCosts?: number;
+
+  /**
+   * Optional payment data (minimal refs to reconcile payments)
+   */
+  paymentData?: any;
 }
 
 export interface SalesOrderListResponse {
@@ -68,6 +75,7 @@ export interface SalesOrderListResponse {
   totalPages: number;
   totalItems: number;
   lastKey?: string;
+  limit?: number;
 }
 export const SalesOrderSchema = new Schema(
   {
@@ -102,6 +110,10 @@ export const SalesOrderSchema = new Schema(
             quantity: { type: Number, required: true },
             price: { type: Number, required: true },
             offerPrice: { type: Number, required: false },
+            type: { type: String, required: false },
+            isService: { type: Boolean, required: false },
+            commission: { type: Number, required: false },
+            name: { type: String, required: true },
           },
         },
       ],
@@ -178,6 +190,10 @@ export const SalesOrderSchema = new Schema(
     },
     paidCommissions: {
       type: Number,
+      required: false,
+    },
+    paymentData: {
+      type: Object,
       required: false,
     },
   },

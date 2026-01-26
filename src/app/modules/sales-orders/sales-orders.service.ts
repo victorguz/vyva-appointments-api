@@ -17,7 +17,6 @@ import {
   SalesOrderListResponse,
 } from '../../schemas/sales-order.schema';
 import { handleError } from '../../shared/error.functions';
-import { sanitizeObjectForDynamoDB } from '../../shared/shared.functions';
 import {
   CreateSalesOrderDto,
   DailyPaymentMethodsResponseDto,
@@ -29,6 +28,10 @@ import {
   SalesReportResponseDto,
   UpdateSalesOrderDto,
 } from './dto/sales-orders.dto';
+import {
+  deleteEmptyProperties,
+  sanitizeObjectForDynamoDB,
+} from 'src/app/shared/shared.functions';
 
 @Injectable()
 export class SalesOrdersService extends TransactionSupport {
@@ -101,36 +104,37 @@ export class SalesOrdersService extends TransactionSupport {
       productDetails,
       body.paymentMethods,
     );
-      const salesOrder: SalesOrder = {
-        id: uuidv4(),
-        subTotalAmount,
-        totalDiscounts,
-        totalCommissions,
-        totalIncome,
-        paidDiscounts,
-        paidCommissions,
-        paidIncome,
-        totalCosts,
-        paidCosts,
-        orderNumber,
-        idCustomer: body.idCustomer,
-        products: productDetails,
-        paymentMethods: body.paymentMethods,
-        paidAmount,
-        totalAmount,
-        status:
-          paidAmount === 0
-            ? SalesOrderStatus.pending
-            : paidAmount === totalAmount
+    const salesOrder: SalesOrder = {
+      id: uuidv4(),
+      name: body.products[0].name || '',
+      subTotalAmount,
+      totalDiscounts,
+      totalCommissions,
+      totalIncome,
+      paidDiscounts,
+      paidCommissions,
+      paidIncome,
+      totalCosts,
+      paidCosts,
+      orderNumber,
+      idCustomer: body.idCustomer,
+      products: productDetails,
+      paymentMethods: body.paymentMethods,
+      paidAmount,
+      totalAmount,
+      status:
+        paidAmount === 0
+          ? SalesOrderStatus.pending
+          : paidAmount === totalAmount
             ? SalesOrderStatus.paid
             : SalesOrderStatus.partiallyPaid,
-        idBusiness: user.idBusiness,
-        createdBy: user.id,
-        createdAt: now,
-        updatedAt: now,
-      };
-      // Sanitize the sales order to prevent Infinity or NaN values
-      return sanitizeObjectForDynamoDB(salesOrder) as SalesOrder;
+      idBusiness: user.idBusiness,
+      createdBy: user.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    // Sanitize the sales order to prevent Infinity or NaN values
+    return sanitizeObjectForDynamoDB(salesOrder) as SalesOrder;
   }
   async update(
     id: string,
@@ -165,29 +169,25 @@ export class SalesOrdersService extends TransactionSupport {
     filters?: ListSalesOrderDto,
   ): Promise<GenericResponse<SalesOrderListResponse>> {
     try {
-      if (!user.idBusiness) {
-        throw new Error('MS014');
-      }
-      if (
-        !moment(filters?.startDate).isValid() ||
-        !moment(filters?.endDate).isValid()
-      ) {
-        throw new Error('MS014');
-      }
-      const result = await this.getSalesInDateRange(
-        filters?.startDate,
-        filters?.endDate,
+      const newFilters = deleteEmptyProperties(filters);
+      const { result, count } = await this.getSalesInDateRange(
+        newFilters?.startDate,
+        newFilters?.endDate,
         user,
-        filters?.limit,
-        filters?.lastKey,
+        newFilters?.limit,
+        newFilters?.lastKey,
       );
       let response: SalesOrderListResponse | null = null;
       if (result.length > 0) {
         response = {
-          salesOrders: result,
-          totalPages: Math.ceil(result.length / 10),
-          totalItems: result.length,
-          lastKey: result[result.length - 1]?.id,
+          salesOrders: result.map((order) => order.toJSON()),
+          totalPages: Math.ceil(count / (newFilters?.limit ?? 10)),
+          totalItems: count,
+          lastKey:
+            count > (newFilters?.limit ?? 10)
+              ? result[result.length - 1]?.id
+              : undefined,
+          limit: newFilters?.limit ?? 10,
         };
       } else {
         response = {
@@ -195,6 +195,7 @@ export class SalesOrdersService extends TransactionSupport {
           totalPages: 0,
           totalItems: 0,
           lastKey: null,
+          limit: newFilters?.limit ?? 10,
         };
       }
 
@@ -204,7 +205,7 @@ export class SalesOrdersService extends TransactionSupport {
     }
   }
 
-  async findOne(id: string): Promise<GenericResponse<SalesOrder>> {
+  async findOne(id: string, user: User): Promise<GenericResponse<SalesOrder>> {
     try {
       // Validate id
       if (!id) {
@@ -213,6 +214,9 @@ export class SalesOrdersService extends TransactionSupport {
 
       const salesOrder = await this.model.get({ id });
       if (!salesOrder) {
+        throw new Error('MS007');
+      }
+      if (salesOrder.idBusiness !== user.idBusiness) {
         throw new Error('MS007');
       }
       return new GenericResponse(salesOrder as SalesOrder);
@@ -268,12 +272,13 @@ export class SalesOrdersService extends TransactionSupport {
   ): Promise<(Partial<Product> & SalesOrderItemDto)[]> {
     const productIds = products.map((product) => product.id);
 
-    // OPTIMIZACIÓN: Usar múltiples get() en paralelo en lugar de scan con in()
-    const productPromises = productIds.map((id) =>
-      this.productModel.get({ id }),
-    );
-
-    const productDetailsArray = await Promise.all(productPromises);
+    const productDetailsArray = await this.productModel
+      .scan('id')
+      .where('id')
+      .in(productIds)
+      .where('idBusiness')
+      .eq(idBusiness)
+      .exec();
 
     // Filtrar productos que pertenecen al negocio
     const validProducts = productDetailsArray.filter(
@@ -285,12 +290,14 @@ export class SalesOrdersService extends TransactionSupport {
     }
 
     return validProducts.map((product) => ({
-      id: product.id,
+      ...product,
       quantity: products.find((p) => p.id === product.id)?.quantity ?? 0,
       isService: product.isService,
       price: product.price,
       offerPrice: product.offerPrice,
-      commissions: product.commissions,
+      name: product.name,
+      type: product.type,
+      commission: product.commissions,
     }));
   }
 
@@ -486,10 +493,12 @@ export class SalesOrdersService extends TransactionSupport {
       const startDate = moment(dateRange.startDate).startOf('day');
       const endDate = moment(dateRange.endDate).endOf('day');
       // Calcular el período anterior con la misma duración
-      const periodDuration = moment.duration(endDate.diff(startDate));
+      const periodDuration = moment.duration(endDate.diff(startDate), 'hours');
       const previousEndDate = moment(startDate);
-      const previousStartDate =
-        moment(previousEndDate).subtract(periodDuration);
+      const previousStartDate = moment(previousEndDate).subtract(
+        periodDuration,
+        'hours',
+      );
 
       // Obtener ventas del período actual
       const currentPeriodSales = await this.getSalesInDateRange(
@@ -504,8 +513,12 @@ export class SalesOrdersService extends TransactionSupport {
         user,
       );
       // Calcular totales
-      const currentValue = this.calculateTotalFromSales(currentPeriodSales);
-      const lastValue = this.calculateTotalFromSales(previousPeriodSales);
+      const currentValue = this.calculateTotalFromSales(
+        currentPeriodSales.result,
+      );
+      const lastValue = this.calculateTotalFromSales(
+        previousPeriodSales.result,
+      );
 
       // Determinar la frecuencia basada en la duración del período
       const frequency = this.determineFrequencyWithMoment(startDate, endDate);
@@ -531,38 +544,53 @@ export class SalesOrdersService extends TransactionSupport {
     user: User,
     limit?: number,
     lastKey?: string,
-  ): Promise<SalesOrder[]> {
+  ): Promise<{ result: any[]; count: number }> {
     try {
       // Validate idBusiness is not undefined or null
       if (!user.idBusiness) {
         throw new Error('MS014');
       }
-      // if(moment is valid date)
-      if (!moment(startDate).isValid() || !moment(endDate).isValid()) {
-        throw new Error('MS014');
-      }
-      startDate = moment(startDate).startOf('day').toDate();
-      endDate = moment(endDate).endOf('day').toDate();
 
       const query = this.model
         .query('idBusiness')
         .using('businessInfo-index')
-        .eq(user.idBusiness)
-        .between(startDate.toISOString(), endDate.toISOString());
+        .eq(user.idBusiness);
+      const queryToCount = this.model
+        .query('idBusiness')
+        .using('businessInfo-index')
+        .eq(user.idBusiness);
 
-      if (lastKey) {
-        query.startAt({ id: lastKey });
+      if (startDate && endDate) {
+        if (!moment(startDate).isValid() || !moment(endDate).isValid()) {
+          throw new Error('MS014');
+        }
+        startDate = moment(startDate).startOf('day').toDate();
+        endDate = moment(endDate).endOf('day').toDate();
+
+        query
+          .and()
+          .where('createdAt')
+          .between(startDate.getTime(), endDate.getTime());
+        queryToCount
+          .and()
+          .where('createdAt')
+          .between(startDate.getTime(), endDate.getTime());
       }
+
+      // if (lastKey) {
+      //   query.startAt({ id: lastKey });
+      // }
+      const count = await queryToCount.count().exec();
+      let result: SalesOrder[] = (await query.exec()).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       if (limit) {
-        query.limit(limit);
+        result = result.slice(0, limit);
       }
-      const result = await query.exec();
 
       // OPTIMIZACIÓN: Usar query con businessInfo-index y luego filtrar por fecha
       // Nota: DynamoDB no permite filtrar por createdAt directamente en un GSI,
       // pero podemos usar query y filtrar en memoria (aún más eficiente que scan completo)
 
-      return result;
+      return { result, count: count.count };
     } catch (error) {
       throw handleError(error);
     }
@@ -606,14 +634,14 @@ export class SalesOrdersService extends TransactionSupport {
       const today = moment().startOf('day');
       const endOfDay = moment().endOf('day');
 
-      const todayOrders = await this.getSalesInDateRange(
+      const { result, count } = await this.getSalesInDateRange(
         today.toDate(),
         endOfDay.toDate(),
         user,
       );
 
       // Calcular el total de ventas del día
-      const totalDailySales = this.calculateTotalFromSales(todayOrders);
+      const totalDailySales = this.calculateTotalFromSales(result);
 
       // Procesar métodos de pago
       const paymentMethodsMap = new Map<
@@ -622,8 +650,8 @@ export class SalesOrdersService extends TransactionSupport {
       >();
 
       // Iterar por cada orden y sus métodos de pago
-      todayOrders.forEach((order) => {
-        order.paymentMethods.forEach((payment) => {
+      result.forEach((order) => {
+        order.paymentMethods.forEach((payment: SalesOrderPaymentMethodDto) => {
           const methodType = payment.type;
           const currentData = paymentMethodsMap.get(methodType) || {
             total: 0,
@@ -664,7 +692,7 @@ export class SalesOrdersService extends TransactionSupport {
         date: today.format('YYYY-MM-DD'),
         totalDailySales,
         paymentMethods,
-        totalOrders: todayOrders.length,
+        totalOrders: result.length,
       };
 
       return new GenericResponse(response);

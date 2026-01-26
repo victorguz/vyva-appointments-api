@@ -238,16 +238,7 @@ export class AppointmentsService extends TransactionSupport {
         ...appointment,
         idOrder: salesOrder.id,
       });
-      // await this.model.create(cleanedPayload);
-
-      // const appointmentResult = await this.model.get({ id: appointment.id });
-      // const appointmentData = appointmentResult.toJSON() as Appointment;
-
-      // Invoke Lambda to sync with Google Calendar asynchronously
-      // await this.lambdaInvokeService.invokeGoogleCalendarSync(
-      //   appointmentData,
-      //   'create',
-      // );
+    
       await this.transaction([
         this.model.transaction.create(appointmentPayload),
         this.salesOrderModel.transaction.create(salesOrder),
@@ -322,14 +313,11 @@ export class AppointmentsService extends TransactionSupport {
       if (!id) {
         throw new Error('MS014');
       }
-
       // OPTIMIZACIÓN: Usar get() en lugar de scan() para búsqueda por ID (clave primaria)
       const appointment = await this.model.get({ id });
-
       if (!appointment) {
         throw new Error('MS007');
       }
-
       // Validar que pertenece al negocio del usuario
       if (appointment.idBusiness !== user.idBusiness) {
         throw new Error('MS007');
@@ -366,7 +354,7 @@ export class AppointmentsService extends TransactionSupport {
         ),
         this.salesOrderModel.transaction.update(
           { id: appointment.idOrder },
-          { ...cleanedDto, modifiedBy: user.id },
+          { paymentMethods, modifiedBy: user.id },
         ),
       ]);
 

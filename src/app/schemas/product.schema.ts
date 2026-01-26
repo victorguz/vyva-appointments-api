@@ -37,6 +37,7 @@ export interface Product extends ProductKey {
   modifiedBy?: string;
   createdAt: Date;
   updatedAt: Date;
+  type: string;
 }
 
 export const ProductSchema = new Schema(
