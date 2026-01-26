@@ -359,15 +359,15 @@ export class AppointmentsService extends TransactionSupport {
       ]);
 
       const appointmentData = await this.model.get({ id: appointment.id });
-      //  try {
-      //    await this.syncAppointmentToGoogleCalendar(
-      //      appointmentData.toJSON() as Appointment,
-      //      user,
-      //    );
-      //  } catch (error) {
-      //    console.error('[create] Failed to sync with Google Calendar:', error);
-      //    // Don't fail appointment creation if Google sync fails
-      //  }
+       try {
+         await this.syncAppointmentToGoogleCalendar(
+           appointmentData.toJSON() as Appointment,
+           user,
+         );
+       } catch (error) {
+         console.error('[create] Failed to sync with Google Calendar:', error);
+         // Don't fail appointment creation if Google sync fails
+       }
       return new GenericResponse(appointmentData);
     } catch (error) {
 
