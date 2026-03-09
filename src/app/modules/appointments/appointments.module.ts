@@ -15,8 +15,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { JWT_EXPIRATION } from 'src/app/core/config/environment.config';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
-import { SalesOrderSchema } from 'src/app/schemas/sales-order.schema';
-import { SalesOrdersService } from '../sales-orders/sales-orders.service';
+import { AppointmentDashboardService } from './appointment-dashboard.service';
+import { CustomerSchema } from 'src/app/schemas/customer.schema';
 
 @Module({
   imports: [
@@ -38,15 +38,6 @@ import { SalesOrdersService } from '../sales-orders/sales-orders.service';
         options: {
           tableName: 'appointments',
           throughput: 'ON_DEMAND',
-        },
-      },
-      {
-        name: 'SalesOrder',
-        schema: SalesOrderSchema,
-        options: {
-          tableName: 'sales-orders',
-          throughput: 'ON_DEMAND',
-          create: false,
         },
       },
       {
@@ -76,6 +67,15 @@ import { SalesOrdersService } from '../sales-orders/sales-orders.service';
           create: false,
         },
       },
+      {
+        name: 'Customer',
+        schema: CustomerSchema,
+        options: {
+          tableName: 'customers',
+          throughput: 'ON_DEMAND',
+          create: false,
+        },
+      },
     ]),
   ],
   controllers: [AppointmentsController, TimeslotsController],
@@ -86,7 +86,7 @@ import { SalesOrdersService } from '../sales-orders/sales-orders.service';
     AppointmentsCustomerService,
     AppointmentsPublicService,
     LambdaInvokeService,
-    SalesOrdersService,
+    AppointmentDashboardService,
   ],
   exports: [AppointmentsService],
 })

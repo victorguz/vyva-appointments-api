@@ -1,36 +1,36 @@
-import { HttpException, HttpStatus } from '@nestjs/common';
+import { HttpException, HttpStatus } from "@nestjs/common";
 import {
   HANDLED_ERRORS,
   ERROR_MESSAGES,
-} from '../core/constants/error.constants';
-import { GenericResponse } from '../core/interfaces/generic-response.interface';
-import { isProduction } from '../core/config/environment.config';
+} from "../core/constants/error.constants";
+import { GenericResponse } from "../core/interfaces/generic-response.interface";
+import { isProduction } from "../core/config/environment.config";
 
 export function handleError(
   error: any,
-  httpStatus?: HttpStatus,
+  httpStatus?: HttpStatus
 ): HttpException {
-  let code: string = 'MS027';
+  let code: string = "MS027";
   let message: string = ERROR_MESSAGES.MS027;
   let status: HttpStatus = HttpStatus.INTERNAL_SERVER_ERROR;
   let handledError = false;
 
   if (
-    typeof error === 'object' &&
+    typeof error === "object" &&
     error !== null &&
-    'response' in error &&
+    "response" in error &&
     (error as any).response?.handledError === true
   ) {
     const resp = (error as any).response;
-    code = typeof resp.code === 'string' ? resp.code : code;
-    message = typeof resp.message === 'string' ? resp.message : message;
-    status = typeof resp.status === 'number' ? resp.status : status;
+    code = typeof resp.code === "string" ? resp.code : code;
+    message = typeof resp.message === "string" ? resp.message : message;
+    status = typeof resp.status === "number" ? resp.status : status;
     handledError = true;
   } else if (
-    typeof error === 'object' &&
+    typeof error === "object" &&
     error !== null &&
-    'message' in error &&
-    typeof (error as { message?: unknown }).message === 'string'
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
   ) {
     const msg = (error as { message: string }).message;
     const found = HANDLED_ERRORS.find((val) => msg.includes(val.keyword));
@@ -46,7 +46,7 @@ export function handleError(
       handledError = true;
     }
     // Si no está manejado, se mantiene MS027 por defecto
-  } else if (typeof error === 'string') {
+  } else if (typeof error === "string") {
     const found = HANDLED_ERRORS.find((val) => error.includes(val.keyword));
     if (found) {
       code = found.code;
@@ -64,19 +64,25 @@ export function handleError(
 
   // Log del error real - usar console para que aparezca en CloudWatch
   const errorMessage =
-    typeof error === 'string'
+    typeof error === "string"
       ? error
       : (error as any)?.message || JSON.stringify(error);
 
   const errorType =
-    typeof error === 'string'
+    typeof error === "string"
       ? error
-      : (error as any)?.code || (error as any)?.error || 'Unknown error';
+      : (error as any)?.code || (error as any)?.error || "Unknown error";
+
+  // Extraer el stacktrace y convertirlo en array
+  const stackTraceString = (error as any)?.stack || new Error().stack || "No stack trace available";
+  const stackTraceArray = typeof stackTraceString === 'string'
+    ? stackTraceString.split('\n').filter(line => line.trim() !== '')
+    : [String(stackTraceString)];
 
   // Intentar serializar el error original de forma segura
   let originalError: any;
   try {
-    if (typeof error === 'object' && error !== null) {
+    if (typeof error === "object" && error !== null) {
       originalError = JSON.stringify(error, Object.getOwnPropertyNames(error));
     } else {
       originalError = error;
@@ -89,17 +95,23 @@ export function handleError(
     originalError,
     type: errorType,
     message: errorMessage,
-    stack: (error as any)?.stack,
     handledError,
     finalCode: code,
     finalStatus: status,
+    environment: isProduction ? 'production' : 'development',
   };
 
-  console.error('[handleError] Error:', error);
+  // Unificar todo en un solo log - usar console.error con múltiples argumentos para mostrar el array correctamente
+  console.error(
+    `[handleError] ${isProduction ? 'Error en producción' : 'Error'}: ${errorType} - ${errorMessage}`,
+    errorDetails,
+    '[handleError] Stacktrace:',
+    stackTraceArray
+  );
 
   // Si el error no fue manejado, siempre usar MS027
   if (!handledError) {
-    code = 'MS027';
+    code = "MS027";
     message = ERROR_MESSAGES.MS027;
     status = HttpStatus.INTERNAL_SERVER_ERROR;
   }
@@ -110,7 +122,7 @@ export function handleError(
     message,
     handledError,
     code,
-    status,
+    status
   );
   return new HttpException(response, status);
 }

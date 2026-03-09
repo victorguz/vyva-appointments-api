@@ -15,19 +15,21 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment } from '../../schemas/appointment.schema';
 import { User } from '../../schemas/user.schema';
-import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { AuthGuard } from '../auth/guards/auth.guard';
+import { CurrentUser } from '../../core/auth/decorators/current-user.decorator';
+import { AuthGuard } from '../../core/auth/guards/auth.guard';
 import { AppointmentsService } from './appointments.service';
 import {
   CreateAppointmentDto,
   CustomerAppointmentFiltersDto,
+  DateRangeReportDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
 } from './dto/appointments.dto';
-import { BusinessIdGuard } from '../auth/guards/businessId.guard';
+import { BusinessIdGuard } from '../../core/auth/guards/businessId.guard';
 import { AppointmentsCustomerService } from './appointments-customer.service';
 import { AppointmentsPublicService } from './appointments-public.service';
+import { AppointmentDashboardService } from './appointment-dashboard.service';
 
 @ApiTags('Appointments')
 @Controller('appointments')
@@ -36,6 +38,7 @@ export class AppointmentsController {
     private readonly appointmentsService: AppointmentsService,
     private readonly appointmentsCustomerService: AppointmentsCustomerService,
     private readonly appointmentsPublicService: AppointmentsPublicService,
+    private readonly appointmentDashboardService: AppointmentDashboardService,
   ) {}
 
   @Post('public')
@@ -49,6 +52,29 @@ export class AppointmentsController {
     @Body() createAppointmentDto: CreateAppointmentDto,
   ): Promise<GenericResponse<Appointment>> {
     return this.appointmentsPublicService.createPublic(createAppointmentDto);
+  }
+
+  @Post('without-service')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary:
+      'Create a new appointment without service (time off, breaks, etc.)',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      'The appointment without service has been successfully created.',
+    type: GenericResponse<Appointment>,
+  })
+  @ApiResponse({ status: 400, description: 'Bad request.' })
+  async createTimeOutAppointment(
+    @Body() createAppointmentDto: CreateAppointmentDto,
+    @CurrentUser() user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    return this.appointmentsService.createTimeOutAppointment(
+      createAppointmentDto,
+      user,
+    );
   }
 
   @Post()
@@ -149,5 +175,59 @@ export class AppointmentsController {
     @CurrentUser() user: User,
   ): Promise<GenericResponse<Appointment>> {
     return this.appointmentsCustomerService.cancelCustomerAppointment(id, user);
+  }
+
+  @Get('scheduled-customers')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({ summary: 'Get scheduled customers' })
+  @ApiResponse({
+    status: 200,
+    description: 'Return scheduled customers.',
+    type: GenericResponse<number>,
+  })
+  async scheduledCustomers(
+    @CurrentUser() user: User,
+  ): Promise<GenericResponse<number>> {
+    return this.appointmentDashboardService.scheduledCustomers(user);
+  }
+
+  @Post('by-status')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'Get appointments count by status for a date range',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Return appointments count by status for the specified date range.',
+    type: GenericResponse<{ [status: string]: number }>,
+  })
+  async appointmentsByStatus(
+    @Body() dateRangeDto: DateRangeReportDto,
+    @CurrentUser() user: User,
+  ): Promise<GenericResponse<{ [status: string]: number }>> {
+    return this.appointmentDashboardService.appointmentsByStatus(
+      dateRangeDto,
+      user,
+    );
+  }
+
+  @Post('occupation-percentage')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({ summary: 'Get occupation percentage for a date range' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Return occupation percentage report for the specified date range.',
+    type: GenericResponse,
+  })
+  async getOccupationPercentage(
+    @Body() dateRangeDto: DateRangeReportDto,
+    @CurrentUser() user: User,
+  ): Promise<GenericResponse<any>> {
+    return this.appointmentDashboardService.getOccupationPercentage(
+      dateRangeDto,
+      user,
+    );
   }
 }

@@ -63,4 +63,5 @@ export enum AppointmentStatus {
   canceled = 'canceled',
   completed = 'completed',
   canceledByCustomer = 'canceledByCustomer',
+  timeOut = 'timeOut',
 }

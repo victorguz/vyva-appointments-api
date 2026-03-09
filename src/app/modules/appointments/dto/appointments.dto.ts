@@ -5,13 +5,40 @@ import {
   IsDateString,
   IsEnum,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   ValidateNested,
 } from 'class-validator';
 
 import { AppointmentStatus } from '../../../core/constants/domain.constants';
-import { SalesOrderPaymentMethodDto } from './payment-method.dto';
+
+export class AppointmentServiceDto {
+  @ApiProperty({ description: 'Service ID' })
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @ApiProperty({ description: 'Service name' })
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @ApiProperty({ description: 'Service price' })
+  @IsNumber()
+  @IsOptional()
+  price?: number;
+
+  @ApiProperty({ description: 'Service offer price' })
+  @IsNumber()
+  @IsOptional()
+  offerPrice?: number;
+
+  @ApiProperty({ description: 'Service duration in minutes' })
+  @IsNumber()
+  @IsOptional()
+  measure?: number;
+}
 
 export class CreatePublicAppointmentDto {
   @ApiProperty({ description: 'Appointment start date and time' })
@@ -45,18 +72,6 @@ export class CreatePublicAppointmentDto {
   idOrder: string;
 
   @ApiProperty({
-    description:
-      'Payment methods for the order (handled in frontend after appointment creation)',
-    type: [SalesOrderPaymentMethodDto],
-    required: false,
-  })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => SalesOrderPaymentMethodDto)
-  @IsOptional()
-  paymentMethods?: SalesOrderPaymentMethodDto[];
-
-  @ApiProperty({
     description: 'Appointment status',
     enum: AppointmentStatus,
     default: AppointmentStatus.pending,
@@ -69,6 +84,11 @@ export class CreatePublicAppointmentDto {
   @IsString()
   @IsOptional()
   idBusiness?: string;
+
+  @ApiProperty({ description: 'Notes / observations for the appointment' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }
 
 export class CreateAppointmentDto {
@@ -82,6 +102,11 @@ export class CreateAppointmentDto {
   @IsOptional()
   idCustomer?: string;
 
+  @ApiProperty({ description: 'Customer name (cached)' })
+  @IsString()
+  @IsOptional()
+  customerName?: string;
+
   @ApiProperty({ description: 'Appointment start date and time' })
   @IsDateString()
   @IsNotEmpty()
@@ -92,10 +117,32 @@ export class CreateAppointmentDto {
   @IsNotEmpty()
   endDate: string;
 
-  @ApiProperty({ description: 'Service ID' })
+  @ApiProperty({ description: 'Service ID (for backwards compatibility)' })
   @IsString()
-  @IsNotEmpty()
-  idService: string;
+  @IsOptional()
+  idService?: string;
+
+  @ApiProperty({ description: 'Service name (calculated: "Service Name (+X)")' })
+  @IsString()
+  @IsOptional()
+  serviceName?: string;
+
+  @ApiProperty({ description: 'Employee name' })
+  @IsString()
+  @IsOptional()
+  employeeName?: string;
+
+  @ApiProperty({ description: 'Notes / observations for the appointment' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
+
+  @ApiProperty({ description: 'Array of services', type: [AppointmentServiceDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AppointmentServiceDto)
+  @IsOptional()
+  services?: AppointmentServiceDto[];
 
   @ApiProperty({ description: 'Employee ID' })
   @IsString()
@@ -106,18 +153,6 @@ export class CreateAppointmentDto {
   @IsString()
   @IsOptional()
   idOrder: string;
-
-  @ApiProperty({
-    description:
-      'Payment methods for the order (handled in frontend after appointment creation)',
-    type: [SalesOrderPaymentMethodDto],
-    required: false,
-  })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => SalesOrderPaymentMethodDto)
-  @IsOptional()
-  paymentMethods?: SalesOrderPaymentMethodDto[];
 
   @ApiProperty({
     description: 'Appointment status',
@@ -154,10 +189,37 @@ export class UpdateAppointmentDto {
   @IsOptional()
   endDate?: string;
 
-  @ApiProperty({ description: 'Service ID' })
+  @ApiProperty({ description: 'Service ID (for backwards compatibility)' })
   @IsString()
   @IsOptional()
   idService?: string;
+
+  @ApiProperty({ description: 'Customer name (cached)' })
+  @IsString()
+  @IsOptional()
+  customerName?: string;
+
+  @ApiProperty({ description: 'Employee name (cached)' })
+  @IsString()
+  @IsOptional()
+  employeeName?: string;
+
+  @ApiProperty({ description: 'Notes / observations for the appointment' })
+  @IsString()
+  @IsOptional()
+  notes?: string;
+
+  @ApiProperty({ description: 'Service name (calculated: "Service Name (+X)")' })
+  @IsString()
+  @IsOptional()
+  serviceName?: string;
+
+  @ApiProperty({ description: 'Array of services', type: [AppointmentServiceDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AppointmentServiceDto)
+  @IsOptional()
+  services?: AppointmentServiceDto[];
 
   @ApiProperty({ description: 'Customer ID' })
   @IsString()
@@ -173,16 +235,6 @@ export class UpdateAppointmentDto {
   @IsString()
   @IsOptional()
   idOrder?: string;
-
-  @ApiProperty({
-    description: 'Updated payment methods for the order',
-    type: [SalesOrderPaymentMethodDto],
-  })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => SalesOrderPaymentMethodDto)
-  @IsOptional()
-  paymentMethods?: SalesOrderPaymentMethodDto[];
 
   @ApiProperty({
     description: 'Appointment status',
@@ -304,4 +356,22 @@ export class CustomerAppointmentResponseDto {
   updatedAt?: Date;
   businessName?: string;
   productName?: string;
+}
+
+export class DateRangeReportDto {
+  @ApiProperty({
+    description: 'Start date for the report (ISO 8601 format)',
+    example: '2024-01-01',
+  })
+  @IsDateString()
+  @IsNotEmpty()
+  startDate: string;
+
+  @ApiProperty({
+    description: 'End date for the report (ISO 8601 format)',
+    example: '2024-01-31',
+  })
+  @IsDateString()
+  @IsNotEmpty()
+  endDate: string;
 }

@@ -1,11 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
 import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
-import { User } from 'src/app/schemas/user.schema';
+import { User, UserKey } from 'src/app/schemas/user.schema';
 import { v4 as uuidv4 } from 'uuid';
 
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
-import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
+import {
+  Appointment,
+  AppointmentKey,
+  AppointmentService,
+} from '../../schemas/appointment.schema';
 import { handleError } from '../../shared/error.functions';
 import {
   deleteEmptyProperties,
@@ -18,19 +22,17 @@ import {
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
 } from './dto/appointments.dto';
-import { SalesOrder, SalesOrderKey } from 'src/app/schemas/sales-order.schema';
-import { SalesOrdersService } from '../sales-orders/sales-orders.service';
-import { TransactionReturnOptions } from 'dynamoose/dist/Transaction';
-
+import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
 @Injectable()
 export class AppointmentsService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
-    @InjectModel('SalesOrder')
-    private readonly salesOrderModel: Model<SalesOrder, SalesOrderKey>,
-    private readonly salesOrderService: SalesOrdersService,
+    @InjectModel('Customer')
+    private readonly customerModel: Model<Customer, CustomerKey>,
+    @InjectModel('User')
+    private readonly userModel: Model<User, UserKey>,
   ) {
     super();
   }
@@ -56,19 +58,7 @@ export class AppointmentsService extends TransactionSupport {
           .eq(filters.idOrder)
           .exec();
 
-        appointments = orderQuery.filter(
-          (apt) =>
-            apt.idBusiness === user.idBusiness &&
-            (!filters.idCustomer || apt.idCustomer === filters.idCustomer) &&
-            (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
-            (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate ||
-              new Date(apt.startDate).getTime() >=
-              new Date(filters.startDate).getTime()) &&
-            (!filters.endDate ||
-              new Date(apt.endDate).getTime() <=
-              new Date(filters.endDate).getTime()),
-        );
+        appointments = orderQuery;
       }
       // Si hay filtro por idCustomer, usar customer-index
       else if (filters?.idCustomer) {
@@ -78,18 +68,7 @@ export class AppointmentsService extends TransactionSupport {
           .eq(filters.idCustomer)
           .exec();
 
-        appointments = customerQuery.filter(
-          (apt) =>
-            apt.idBusiness === user.idBusiness &&
-            (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
-            (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate ||
-              new Date(apt.startDate).getTime() >=
-              new Date(filters.startDate).getTime()) &&
-            (!filters.endDate ||
-              new Date(apt.endDate).getTime() <=
-              new Date(filters.endDate).getTime()),
-        );
+        appointments = customerQuery;
       }
       // Si hay filtro por idEmployee, usar employee-index
       else if (filters?.idEmployee) {
@@ -99,17 +78,7 @@ export class AppointmentsService extends TransactionSupport {
           .eq(filters.idEmployee)
           .exec();
 
-        appointments = employeeQuery.filter(
-          (apt) =>
-            apt.idBusiness === user.idBusiness &&
-            (!filters.status || apt.status === filters.status) &&
-            (!filters.startDate ||
-              new Date(apt.startDate).getTime() >=
-              new Date(filters.startDate).getTime()) &&
-            (!filters.endDate ||
-              new Date(apt.endDate).getTime() <=
-              new Date(filters.endDate).getTime()),
-        );
+        appointments = employeeQuery;
       }
       // Si hay filtro por status, usar status-index
       else if (filters?.status) {
@@ -119,16 +88,7 @@ export class AppointmentsService extends TransactionSupport {
           .eq(filters.status)
           .exec();
 
-        appointments = statusQuery.filter(
-          (apt) =>
-            apt.idBusiness === user.idBusiness &&
-            (!filters.startDate ||
-              new Date(apt.startDate).getTime() >=
-              new Date(filters.startDate).getTime()) &&
-            (!filters.endDate ||
-              new Date(apt.endDate).getTime() <=
-              new Date(filters.endDate).getTime()),
-        );
+        appointments = statusQuery;
       }
       // Si no hay filtros específicos, usar idBusiness-index como base
       else {
@@ -138,22 +98,27 @@ export class AppointmentsService extends TransactionSupport {
           .eq(user.idBusiness)
           .exec();
 
-        appointments = businessQuery.filter((apt) => {
-          const startDateMatch =
-            !filters?.startDate ||
-            new Date(apt.startDate).getTime() >=
-            new Date(filters.startDate).getTime();
-          const endDateMatch =
-            !filters?.endDate ||
-            new Date(apt.endDate).getTime() <=
-            new Date(filters.endDate).getTime();
-
-          return startDateMatch && endDateMatch;
-        });
+        appointments = businessQuery;
       }
 
       return new GenericResponse(
-        appointments.map((appointment) => appointment as Appointment),
+        appointments
+          .filter(
+            (apt) =>
+              apt.idBusiness === user.idBusiness &&
+              (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
+              (!filters.status || apt.status === filters.status) &&
+              // Fix: Use overlapping logic instead of containment
+              // Appointment overlaps with range if: endDate >= rangeStart && startDate <= rangeEnd
+              (!filters.startDate ||
+                new Date(apt.endDate).getTime() >=
+                  new Date(filters.startDate).getTime()) &&
+              (!filters.endDate ||
+                new Date(apt.startDate).getTime() <=
+                  new Date(filters.endDate).getTime()),
+          )
+          //by createdAt descending
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
       );
     } catch (error) {
       throw handleError(error);
@@ -205,11 +170,42 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS042'); // Invalid date format
       }
 
-      const appointment = {
+      // Process services array or create from single service for backwards compatibility
+      let services = body.services;
+      if (!services || services.length === 0) {
+        // Backwards compatibility: create services array from single idService
+        if (body.idService) {
+          services = [
+            {
+              id: body.idService,
+              name: body.serviceName || '', // Will be populated by sales order
+              price: 0,
+              offerPrice: 0,
+              measure: 0,
+            },
+          ];
+        }
+      }
+
+      // Get customer name if not provided but idCustomer exists
+      let customerName = body.customerName;
+      if (!customerName && body.idCustomer) {
+        customerName = await this.resolveCustomerName(body.idCustomer);
+      }
+
+      // Resolve employeeName from User schema if not provided
+      let employeeName = body.employeeName ?? '';
+      if (!employeeName && body.idEmployee) {
+        employeeName = await this.resolveEmployeeName(body.idEmployee);
+      }
+
+      const appointment: Appointment = {
         id: uuidv4(),
         startDate: sanitizeNumericValue(startDateTimestamp) as any,
         endDate: sanitizeNumericValue(endDateTimestamp) as any,
-        idService: body.idService,
+        idService:
+          body.idService ||
+          (services && services.length > 0 ? services[0].id : ''),
         idCustomer: body.idCustomer,
         idEmployee: body.idEmployee,
         status: AppointmentStatus.pending,
@@ -217,31 +213,25 @@ export class AppointmentsService extends TransactionSupport {
         createdBy: user.id,
         googleCalendarId: body.googleCalendarId,
         googleCalendarEventId: body.googleCalendarEventId,
+        customerName: customerName,
+        serviceName: body.serviceName || body.services?.[0]?.name || '',
+        employeeName: employeeName,
+        notes: body.notes,
+        services: services,
       };
 
-      const salesOrder: SalesOrder =
-        await this.salesOrderService.createOrderObject(
-          {
-            idCustomer: body.idCustomer,
-            products: [
-              {
-                id: body.idService,
-                quantity: 1,
-              },
-            ],
-            paymentMethods: body.paymentMethods,
-          },
-          user,
-        );
+      // Prepare products for sales order from services array
+      const products = services?.map((service) => ({
+        id: service.id,
+        quantity: 1,
+      })) || [{ id: body.idService, quantity: 1 }];
 
       appointmentPayload = deleteEmptyProperties({
         ...appointment,
-        idOrder: salesOrder.id,
       });
 
       await this.transaction([
         this.model.transaction.create(appointmentPayload),
-        this.salesOrderModel.transaction.create(salesOrder),
       ]);
 
       const appointmentData = await this.model.get({ id: appointment.id });
@@ -252,8 +242,70 @@ export class AppointmentsService extends TransactionSupport {
       return new GenericResponse(appointmentData);
     } catch (error) {
       if (appointmentPayload) await this.model.delete(appointmentPayload);
-      if (appointmentPayload?.idOrder)
-        await this.salesOrderModel.delete({ id: appointmentPayload.idOrder });
+      throw handleError(error);
+    }
+  }
+
+  async createTimeOutAppointment(
+    body: CreateAppointmentDto,
+    user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    let appointmentPayload;
+    try {
+      if (!body.startDate || !body.endDate) {
+        throw new Error('MS014'); // Start and end dates are required
+      }
+
+      this.validateAppointmentDates(body.startDate, body.endDate);
+
+      const startDateTimestamp = new Date(body.startDate).getTime();
+      const endDateTimestamp = new Date(body.endDate).getTime();
+
+      // Validate that dates are valid and not Infinity
+      if (
+        !isFinite(startDateTimestamp) ||
+        !isFinite(endDateTimestamp) ||
+        isNaN(startDateTimestamp) ||
+        isNaN(endDateTimestamp)
+      ) {
+        throw new Error('MS042'); // Invalid date format
+      }
+
+      // Get customer name if not provided but idCustomer exists
+      let customerName = body.customerName;
+      if (!customerName && body.idCustomer) {
+        customerName = await this.resolveCustomerName(body.idCustomer);
+      }
+
+      const appointment = {
+        id: uuidv4(),
+        startDate: sanitizeNumericValue(startDateTimestamp) as any,
+        endDate: sanitizeNumericValue(endDateTimestamp) as any,
+        idCustomer: body.idCustomer,
+        idEmployee: body.idEmployee,
+        status: AppointmentStatus.timeOut, // Status específico para appointments sin servicio
+        idBusiness: user.idBusiness,
+        createdBy: user.id,
+        googleCalendarId: body.googleCalendarId,
+        googleCalendarEventId: body.googleCalendarEventId,
+        customerName: customerName,
+        serviceName: body.serviceName || '',
+        notes: body.notes,
+        services: [] as AppointmentService[], // Sin servicios
+      };
+
+      appointmentPayload = deleteEmptyProperties(appointment);
+
+      await this.model.create(appointmentPayload);
+
+      const appointmentData = await this.model.get({ id: appointment.id });
+      await this.syncAppointmentToGoogleCalendar(
+        appointmentData.toJSON() as Appointment,
+        user,
+      );
+      return new GenericResponse(appointmentData);
+    } catch (error) {
+      if (appointmentPayload) await this.model.delete(appointmentPayload);
 
       throw handleError(error);
     }
@@ -291,7 +343,7 @@ export class AppointmentsService extends TransactionSupport {
       }
     } catch (error) {
       console.error('[syncAppointmentToGoogleCalendar] Error:', error);
-      throw error;
+      // throw error;
     }
   }
 
@@ -314,13 +366,19 @@ export class AppointmentsService extends TransactionSupport {
       if (appointment.idBusiness !== user.idBusiness) {
         throw new Error('MS007');
       }
-      this.validateAppointmentDates(
-        updateAppointmentDto.startDate,
-        updateAppointmentDto.endDate,
-      );
-      // Remove paymentMethods from update - no longer handled here
+      // Only validate dates if both are provided in the update
+      if (updateAppointmentDto.startDate && updateAppointmentDto.endDate) {
+        this.validateAppointmentDates(
+          updateAppointmentDto.startDate,
+          updateAppointmentDto.endDate,
+        );
+      }
       const cleanedUpdateDto = deleteEmptyProperties(updateAppointmentDto);
-      const { paymentMethods, ...cleanedDto } = cleanedUpdateDto as any;
+      // Preserve notes when explicitly set (even to empty string) so clearing works
+      if ('notes' in updateAppointmentDto) {
+        (cleanedUpdateDto as any).notes = updateAppointmentDto.notes ?? '';
+      }
+      const cleanedDto = cleanedUpdateDto;
 
       // Handle date conversions - convert string dates to Date objects for Dynamoose
       if (cleanedDto.startDate) {
@@ -338,17 +396,43 @@ export class AppointmentsService extends TransactionSupport {
         cleanedDto.endDate = endDate;
       }
 
-      // Update appointment fields if there are any changes
-      await this.transaction([
+      // Calculate serviceName if services are provided
+      if (cleanedDto.services && cleanedDto.services.length > 0) {
+        const firstServiceName = cleanedDto.services[0].name || 'Servicio';
+        if (cleanedDto.services.length > 1) {
+          cleanedDto.serviceName = `${firstServiceName} (+${cleanedDto.services.length - 1})`;
+        } else {
+          cleanedDto.serviceName = firstServiceName;
+        }
+
+        // Update idService for backwards compatibility
+        cleanedDto.idService = cleanedDto.services[0].id;
+      }
+
+      // Resolve customerName from Customer schema if idCustomer is updated but name not provided
+      if (cleanedDto.idCustomer && !cleanedDto.customerName) {
+        cleanedDto.customerName = await this.resolveCustomerName(
+          cleanedDto.idCustomer,
+        );
+      }
+
+      // Resolve employeeName from User schema if idEmployee is updated but name not provided
+      if (cleanedDto.idEmployee && !cleanedDto.employeeName) {
+        cleanedDto.employeeName = await this.resolveEmployeeName(
+          cleanedDto.idEmployee,
+        );
+      }
+
+      // Prepare sales order updates only if appointment has an order
+      const transactionItems: any[] = [
         this.model.transaction.update(
           { id: appointment.id },
           { ...cleanedDto, modifiedBy: user.id },
         ),
-        this.salesOrderModel.transaction.update(
-          { id: appointment.idOrder },
-          { paymentMethods, modifiedBy: user.id },
-        ),
-      ]);
+      ];
+
+      // Update appointment fields if there are any changes
+      await this.transaction(transactionItems);
 
       const appointmentData = await this.model.get({ id: appointment.id });
       try {
@@ -362,7 +446,6 @@ export class AppointmentsService extends TransactionSupport {
       }
       return new GenericResponse(appointmentData);
     } catch (error) {
-
       throw handleError(error);
     }
   }
@@ -460,5 +543,34 @@ export class AppointmentsService extends TransactionSupport {
       throw new Error('MS041');
     }
     console.log('validateAppointmentDates');
+  }
+
+  private async resolveCustomerName(idCustomer: string): Promise<string> {
+    try {
+      const customer = await this.customerModel.get({ id: idCustomer });
+      if (!customer) return '';
+      const customerData = customer.toJSON();
+      return (
+        [customerData.firstName, customerData.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || 'Sin nombre'
+      );
+    } catch (error) {
+      console.error('[resolveCustomerName] Error:', error);
+      return '';
+    }
+  }
+
+  private async resolveEmployeeName(idEmployee: string): Promise<string> {
+    try {
+      const employee = await this.userModel.get({ id: idEmployee });
+      if (!employee) return '';
+      const employeeData = employee.toJSON();
+      return employeeData.name || employeeData.email || '';
+    } catch (error) {
+      console.error('[resolveEmployeeName] Error:', error);
+      return '';
+    }
   }
 }

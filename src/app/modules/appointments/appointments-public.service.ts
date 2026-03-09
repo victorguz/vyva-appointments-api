@@ -66,6 +66,7 @@ export class AppointmentsPublicService extends TransactionSupport {
         status: AppointmentStatus.pending,
         idBusiness: body.idBusiness,
         createdBy: undefined as any,
+        notes: body.notes,
       };
 
       const cleanedPayload = deleteEmptyProperties(appointment);

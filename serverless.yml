@@ -18,6 +18,7 @@ provider:
     # Parámetros necesarios para autenticación
     JWT_SECRET: ${ssm:/vyva/${self:provider.stage}/VYVA_JWT_SECRET}
     SECRET_KEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SECRET_KEY}
+    VYVA_SUPERADMIN_APIKEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SUPERADMIN_APIKEY, ''}
 
   iam:
     role:
@@ -84,6 +85,7 @@ provider:
             - lambda:InvokeFunction
           Resource:
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-integrations-${self:provider.stage}-api
+            - arn:aws:lambda:${self:provider.region}:*:function:vyva-domains-${self:provider.stage}-api
 
         # Permisos para logs de CloudWatch
         - Effect: Allow

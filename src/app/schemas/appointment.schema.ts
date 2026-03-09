@@ -6,11 +6,19 @@ export interface AppointmentKey {
   id?: string;
 }
 
+export interface AppointmentService {
+  id: string;
+  name: string;
+  price?: number;
+  offerPrice?: number;
+  measure?: number;
+}
+
 export interface Appointment extends AppointmentKey {
   id: string;
   startDate: Date;
   endDate: Date;
-  idService: string;
+  idService?: string; // Kept for backwards compatibility
   idCustomer?: string;
   idEmployee?: string;
   idOrder?: string;
@@ -22,6 +30,12 @@ export interface Appointment extends AppointmentKey {
   updatedAt?: Date;
   googleCalendarId?: string;
   googleCalendarEventId?: string;
+  // New fields for multiple services and cached names
+  customerName?: string;
+  serviceName?: string;
+  employeeName?: string;
+  notes?: string;
+  services?: AppointmentService[]; // Array of services for this appointment
 }
 
 export const AppointmentSchema = new Schema(
@@ -41,7 +55,7 @@ export const AppointmentSchema = new Schema(
     },
     idService: {
       type: String,
-      required: true,
+      required: false,
     },
     idCustomer: {
       type: String,
@@ -70,7 +84,7 @@ export const AppointmentSchema = new Schema(
     status: {
       type: String,
       required: true,
-      enum: Object.values(AppointmentStatus),
+      enum: Object.values(AppointmentStatus), // Includes timeOut
       index: {
         type: 'global',
         name: 'status-index',
@@ -103,6 +117,38 @@ export const AppointmentSchema = new Schema(
         type: 'global',
         name: 'googleEvent-index',
       },
+    },
+    customerName: {
+      type: String,
+      required: false,
+    },
+    serviceName: {
+      type: String,
+      required: false,
+    },
+    employeeName: {
+      type: String,
+      required: false,
+    },
+    notes: {
+      type: String,
+      required: false,
+    },
+    services: {
+      type: Array,
+      schema: [
+        {
+          type: Object,
+          schema: {
+            id: { type: String, required: true },
+            name: { type: String, required: true },
+            price: { type: Number, required: false },
+            offerPrice: { type: Number, required: false },
+            measure: { type: Number, required: false },
+          },
+        },
+      ],
+      required: false,
     },
   },
   {

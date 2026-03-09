@@ -4,8 +4,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { DynamooseModule } from 'nestjs-dynamoose';
 import { UserSchema } from '../schemas/user.schema';
+import { BusinessSchema } from '../schemas/business.schema';
 import { JWT_EXPIRATION } from '../core/config/environment.config';
-import { AuthGuard } from '../modules/auth/guards/auth.guard';
+import { AuthGuard } from '../core/auth/guards/auth.guard';
 
 // Validate schema is loaded correctly
 if (!UserSchema || UserSchema.constructor.name !== 'Schema') {
@@ -48,6 +49,14 @@ if (!UserSchema || UserSchema.constructor.name !== 'Schema') {
               'role',
             ],
           },
+        },
+      },
+      {
+        name: 'Business',
+        schema: BusinessSchema,
+        options: {
+          tableName: 'businesses',
+          throughput: 'ON_DEMAND',
         },
       },
     ]),
