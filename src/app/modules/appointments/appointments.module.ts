@@ -17,6 +17,7 @@ import { JWT_EXPIRATION } from 'src/app/core/config/environment.config';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { AppointmentDashboardService } from './appointment-dashboard.service';
 import { CustomerSchema } from 'src/app/schemas/customer.schema';
+import { DomainSchema } from 'src/app/schemas/domain.schema';
 
 @Module({
   imports: [
@@ -72,6 +73,15 @@ import { CustomerSchema } from 'src/app/schemas/customer.schema';
         schema: CustomerSchema,
         options: {
           tableName: 'customers',
+          throughput: 'ON_DEMAND',
+          create: false,
+        },
+      },
+      {
+        name: 'Domain',
+        schema: DomainSchema,
+        options: {
+          tableName: 'domains',
           throughput: 'ON_DEMAND',
           create: false,
         },

@@ -7,6 +7,7 @@ import {
   Appointment,
   AppointmentKey,
 } from '../../../schemas/appointment.schema';
+import { Domain, DomainKey } from '../../../schemas/domain.schema';
 import { Product, ProductKey } from '../../../schemas/product.schema';
 import { User, UserKey } from '../../../schemas/user.schema';
 import { handleError } from '../../../shared/error.functions';
@@ -29,6 +30,8 @@ export class TimeslotsService {
     private readonly appointmentModel: Model<Appointment, AppointmentKey>,
     @InjectModel('Product')
     private readonly productModel: Model<Product, ProductKey>,
+    @InjectModel('Domain')
+    private readonly domainModel: Model<Domain, DomainKey>,
   ) {}
 
   /**
@@ -51,7 +54,7 @@ export class TimeslotsService {
         activeEmployees,
       );
 
-      // Get business configuration (defaults if not configured)
+      // Get business configuration (minHour, maxHour, splitTime from domains or defaults)
       const config = await this.getBusinessConfig(
         businessId,
         service.measure,
@@ -151,16 +154,46 @@ export class TimeslotsService {
     return appointments;
   }
 
+  /** Default minutes between appointments (margin) when not configured in domain. */
+  private static readonly DEFAULT_SPLIT_TIME_MARGIN = 5;
+
   /**
-   * Get business configuration (minHour, maxHour, splitTime)
-   * TODO: This could be fetched from a domains/business config service
-   * For now, using defaults or provided values
+   * Get splitTime margin (minutes between appointments) from Domain group 'appointmentTimes' for the business.
+   */
+  private async getAppointmentTimesSplitMargin(businessId: string): Promise<number> {
+    try {
+      const domains = await this.domainModel
+        .query('idBusiness')
+        .eq(businessId)
+        .using('domain-idBusinessid-index')
+        .where('group')
+        .eq('appointmentTimes')
+        .exec();
+
+      if (!domains?.length || !domains[0].value) {
+        return TimeslotsService.DEFAULT_SPLIT_TIME_MARGIN;
+      }
+
+      const value = JSON.parse(domains[0].value) as { splitTime?: number };
+      if (typeof value.splitTime === 'number' && value.splitTime >= 0) {
+        return value.splitTime;
+      }
+    } catch {
+      // ignore parse or query errors, use default
+    }
+    return TimeslotsService.DEFAULT_SPLIT_TIME_MARGIN;
+  }
+
+  /**
+   * Get business configuration (minHour, maxHour, splitTime).
+   * splitTime margin is read from Domain group 'appointmentTimes'; default 5.
    */
   private async getBusinessConfig(
     businessId: string,
     serviceTime: number,
     timezoneOffset: number,
   ): Promise<BusinessConfigDto> {
+    const margin = await this.getAppointmentTimesSplitMargin(businessId);
     // Get timezone offset in minutes from getTimezoneOffset()
     // getTimezoneOffset() returns positive for timezones west of UTC (e.g., UTC-5 = 300)
     // Example: UTC-5 (Bogotá) = 300 minutes, UTC+5 = -300 minutes
@@ -198,7 +231,7 @@ export class TimeslotsService {
     return {
       minHour: newMinHour.format('HH:mm'),
       maxHour: newMaxHour.format('HH:mm'),
-      splitTime: serviceTime + 5, // 5 minutes default
+      splitTime: serviceTime + margin,
     };
   }
 

@@ -2,12 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
 import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
 import { User } from 'src/app/schemas/user.schema';
-import { v4 as uuidv4 } from 'uuid';
 
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { handleError } from '../../shared/error.functions';
-import { deleteEmptyProperties } from '../../shared/shared.functions';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import {
   CreateAppointmentDto,
@@ -17,6 +15,7 @@ import {
 } from './dto/appointments.dto';
 import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { Business, BusinessKey } from 'src/app/schemas/business.schema';
+import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
 
 @Injectable()
 export class AppointmentsCustomerService extends TransactionSupport {
@@ -28,10 +27,16 @@ export class AppointmentsCustomerService extends TransactionSupport {
     private readonly productModel: Model<Product, ProductKey>,
     @InjectModel('Business')
     private readonly businessModel: Model<Business, BusinessKey>,
+    @InjectModel('Customer')
+    private readonly customerModel: Model<Customer, CustomerKey>,
   ) {
     super();
   }
 
+  /**
+   * Lista citas del usuario autenticado: primero obtiene los customers con idUser = user.id,
+   * luego las citas cuyo idCustomer está en esa lista.
+   */
   async findAllByCustomer(
     user?: User,
   ): Promise<GenericResponse<Appointment[]>> {
@@ -40,17 +45,38 @@ export class AppointmentsCustomerService extends TransactionSupport {
         throw new Error('MS014');
       }
 
-      // OPTIMIZACIÓN: Usar query con GSI customer-index en lugar de scan
-      const customerQueryResult = await this.model
-        .query('idCustomer')
-        .using('customer-index')
+      // 1. Obtener todos los customers asociados a este usuario (idUser)
+      const customersResult = await this.customerModel
+        .scan()
+        .where('idUser')
         .eq(user.id)
         .exec();
-
-      // Dynamose returns an array of Appointment (typed), otherwise type as Appointment[] to be explicit
-      const appointments: Appointment[] = Array.isArray(customerQueryResult)
-        ? customerQueryResult
+      const customers: Customer[] = Array.isArray(customersResult)
+        ? (customersResult as Customer[])
         : [];
+      const customerIds = customers.map((c) => c.id).filter(Boolean);
+      if (customerIds.length === 0) {
+        return new GenericResponse([]);
+      }
+
+      // 2. Para cada idCustomer, consultar appointments por GSI customer-index
+      const allAppointments: Appointment[] = [];
+      for (const idCustomer of customerIds) {
+        const queryResult = await this.model
+          .query('idCustomer')
+          .using('customer-index')
+          .eq(idCustomer)
+          .exec();
+        const list: Appointment[] = Array.isArray(queryResult)
+          ? (queryResult as Appointment[])
+          : [];
+        allAppointments.push(...list);
+      }
+      // Ordenar por startDate descendente (más recientes primero)
+      const appointments = allAppointments.sort(
+        (a, b) =>
+          new Date(b.startDate).getTime() - new Date(a.startDate).getTime(),
+      );
 
       // Use Maps to cache products and businesses by their ids. This avoids redundant fetches.
       const productCache: Map<string, Product | null> = new Map();
@@ -104,23 +130,23 @@ export class AppointmentsCustomerService extends TransactionSupport {
     user: User,
   ): Promise<GenericResponse<Appointment>> {
     try {
-      // Validate id and user
-      if (!id) {
-        throw new Error('MS014');
-      }
-      if (!user || !user.id) {
+      if (!id || !user?.id) {
         throw new Error('MS014');
       }
 
-      // Get the appointment to validate ownership
       const appointment = await this.model.get({ id });
-
       if (!appointment) {
         throw new Error('MS007');
       }
 
-      // Validate that the appointment belongs to the customer
-      if (appointment.idCustomer !== user.id) {
+      // Validar que la cita pertenece a un customer de este usuario (idCustomer → customer.idUser = user.id)
+      if (!appointment.idCustomer) {
+        throw new Error('MS007');
+      }
+      const customer = await this.customerModel.get({
+        id: appointment.idCustomer,
+      });
+      if (!customer || (customer as Customer).idUser !== user.id) {
         throw new Error('MS007');
       }
 

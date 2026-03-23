@@ -37,6 +37,23 @@ export class AppointmentsService extends TransactionSupport {
     super();
   }
 
+  private formatServiceNamesSummaryFromServices(
+    services: AppointmentService[],
+  ): string {
+    const names = services.map((s) => (s.name || '').trim()).filter(Boolean);
+    if (names.length === 0) return '';
+    const maxPerName = 28;
+    const truncate = (t: string) =>
+      t.length <= maxPerName
+        ? t
+        : t.slice(0, Math.max(0, maxPerName - 1)) + 'â€¦';
+    const parts = names.map(truncate);
+    const joined = parts.join(', ');
+    return names.length > 1
+      ? `${joined} Â· ${names.length} Ã­tems`
+      : joined;
+  }
+
   async findAll(
     user: User,
     filters?: ListAppointmentDto,
@@ -398,12 +415,9 @@ export class AppointmentsService extends TransactionSupport {
 
       // Calculate serviceName if services are provided
       if (cleanedDto.services && cleanedDto.services.length > 0) {
-        const firstServiceName = cleanedDto.services[0].name || 'Servicio';
-        if (cleanedDto.services.length > 1) {
-          cleanedDto.serviceName = `${firstServiceName} (+${cleanedDto.services.length - 1})`;
-        } else {
-          cleanedDto.serviceName = firstServiceName;
-        }
+        cleanedDto.serviceName = this.formatServiceNamesSummaryFromServices(
+          cleanedDto.services,
+        );
 
         // Update idService for backwards compatibility
         cleanedDto.idService = cleanedDto.services[0].id;

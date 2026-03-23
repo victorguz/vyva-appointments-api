@@ -5,7 +5,6 @@ import {
   IsDateString,
   IsNotEmpty,
   IsNumber,
-  IsOptional,
   IsString,
   Min,
   ValidateNested,
@@ -42,6 +41,7 @@ export class GetTimeslotsQueryDto {
   @Type(() => Number)
   @IsNumber()
   timezoneOffset: number;
+
 }
 
 export class BaseSlotDto {

@@ -212,22 +212,4 @@ export class AppointmentsController {
     );
   }
 
-  @Post('occupation-percentage')
-  @UseGuards(AuthGuard, BusinessIdGuard)
-  @ApiOperation({ summary: 'Get occupation percentage for a date range' })
-  @ApiResponse({
-    status: 200,
-    description:
-      'Return occupation percentage report for the specified date range.',
-    type: GenericResponse,
-  })
-  async getOccupationPercentage(
-    @Body() dateRangeDto: DateRangeReportDto,
-    @CurrentUser() user: User,
-  ): Promise<GenericResponse<any>> {
-    return this.appointmentDashboardService.getOccupationPercentage(
-      dateRangeDto,
-      user,
-    );
-  }
 }

@@ -5,7 +5,7 @@ export interface BusinessKey {
 }
 
 export interface Business extends BusinessKey {
-  userId: string;
+  idUser: string;
   name?: string;
   description?: string;
   slogan?: string;
@@ -16,9 +16,16 @@ export interface Business extends BusinessKey {
   website?: string;
   logo?: string;
   slug: string;
+  facebook?: string;
+  instagram?: string;
+  tiktok?: string;
+  whatsapp?: string;
+  area?: string;
+  isPhysicalAttention?: boolean;
   isActive?: boolean;
   createdAt: Date;
   updatedAt: Date;
+  coverImages?: string[];
 }
 
 export const BusinessSchema = new Schema(
@@ -28,12 +35,12 @@ export const BusinessSchema = new Schema(
       hashKey: true,
       required: true,
     },
-    userId: {
+    idUser: {
       type: String,
       required: true,
       index: {
         type: 'global',
-        name: 'userId-index',
+        name: 'idUser-index',
       },
     },
     name: {
@@ -68,6 +75,22 @@ export const BusinessSchema = new Schema(
       type: String,
       required: false,
     },
+    facebook: {
+      type: String,
+      required: false,
+    },
+    instagram: {
+      type: String,
+      required: false,
+    },
+    tiktok: {
+      type: String,
+      required: false,
+    },
+    whatsapp: {
+      type: String,
+      required: false,
+    },
     logo: {
       type: String,
       required: false,
@@ -84,6 +107,19 @@ export const BusinessSchema = new Schema(
       type: Boolean,
       required: false,
       default: true,
+    },
+    area: {
+      type: String,
+      required: false,
+    },
+    isPhysicalAttention: {
+      type: Boolean,
+      required: false,
+    },
+    coverImages: {
+      type: Array,
+      schema: [String],
+      required: false,
     },
   },
   {
