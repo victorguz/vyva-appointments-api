@@ -165,7 +165,7 @@ export class TimeslotsService {
       const domains = await this.domainModel
         .query('idBusiness')
         .eq(businessId)
-        .using('domain-idBusinessid-index')
+        .using('domain-idBusiness-index')
         .where('group')
         .eq('appointmentTimes')
         .exec();

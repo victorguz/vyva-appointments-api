@@ -1,7 +1,8 @@
 import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNotEmpty,
@@ -122,7 +123,10 @@ export class CreateAppointmentDto {
   @IsOptional()
   idService?: string;
 
-  @ApiProperty({ description: 'Service name (calculated: "Service Name (+X)")' })
+  @ApiProperty({
+    description:
+      'Cached display name: truncated names joined, e.g. "Name…, Name2… · N ítems"',
+  })
   @IsString()
   @IsOptional()
   serviceName?: string;
@@ -209,7 +213,10 @@ export class UpdateAppointmentDto {
   @IsOptional()
   notes?: string;
 
-  @ApiProperty({ description: 'Service name (calculated: "Service Name (+X)")' })
+  @ApiProperty({
+    description:
+      'Cached display name: truncated names joined, e.g. "Name…, Name2… · N ítems"',
+  })
   @IsString()
   @IsOptional()
   serviceName?: string;

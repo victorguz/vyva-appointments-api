@@ -16,7 +16,7 @@ export class AuthGuard implements CanActivate {
     private readonly model: Model<User, UserKey>,
     @InjectModel('Business')
     private readonly businessModel: Model<Business, BusinessKey>,
-  ) {}
+  ) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -56,12 +56,8 @@ export class AuthGuard implements CanActivate {
         ![UserRole.admin, UserRole.superadmin].includes(
           userData.role as UserRole,
         )
+        || !userData.idBusiness
       ) {
-        throw new Error('MS019');
-      }
-
-      // Solo exige idBusiness si no es superadmin (superadmin puede no enviar api-bid)
-      if (!userData.idBusiness && userData.role !== UserRole.superadmin) {
         throw new Error('MS019');
       }
 
@@ -70,41 +66,15 @@ export class AuthGuard implements CanActivate {
         password: undefined,
         apiKey: undefined,
       };
+      (request as any)['user'] = cleanUserData;
 
-      return this.authorizeAdminOrSuperadmin(request, cleanUserData);
+      return true;
     } catch (error) {
       throw handleError(error);
     }
   }
 
-  private async authorizeAdminOrSuperadmin(
-    request: Request,
-    userData: Partial<User>,
-  ): Promise<boolean> {
-    if (userData.role === UserRole.superadmin) {
-      const bid = this.extractApiBidFromHeader(request);
-      if (bid) {
-        const business = await this.businessModel.get({ id: bid });
-        if (!business) {
-          throw new Error('MS007'); // business not found
-        }
-        userData.idBusiness = bid;
-      } else {
-        userData.idBusiness = undefined;
-        delete userData.idBusiness;
-      }
-    }
 
-    (request as any)['user'] = userData;
-    return true;
-  }
-
-  private extractApiBidFromHeader(request: Request): string | undefined {
-    return (
-      (request.headers['x-api-bid'] as string | undefined) ||
-      (request.headers['api-bid'] as string | undefined)
-    );
-  }
 
   private async authenticateByToken(
     request: Request,
@@ -115,6 +85,7 @@ export class AuthGuard implements CanActivate {
         secret: process.env.JWT_SECRET,
       });
       const user = await this.model.get({ id: payload.sub });
+      console.log('user', user);
       // const user = await this.model.get({
       //   id: 'c8133285-9e16-4379-91b6-dbd8596effaa',
       // });

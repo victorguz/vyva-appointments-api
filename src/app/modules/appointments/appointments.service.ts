@@ -43,14 +43,16 @@ export class AppointmentsService extends TransactionSupport {
     const names = services.map((s) => (s.name || '').trim()).filter(Boolean);
     if (names.length === 0) return '';
     const maxPerName = 28;
+    const ellipsis = '\u2026';
+    const dot = '\u00b7';
     const truncate = (t: string) =>
       t.length <= maxPerName
         ? t
-        : t.slice(0, Math.max(0, maxPerName - 1)) + 'â€¦';
+        : t.slice(0, Math.max(0, maxPerName - 1)) + ellipsis;
     const parts = names.map(truncate);
     const joined = parts.join(', ');
     return names.length > 1
-      ? `${joined} Â· ${names.length} Ã­tems`
+      ? `${joined} ${dot} ${names.length} \u00edtems`
       : joined;
   }
 

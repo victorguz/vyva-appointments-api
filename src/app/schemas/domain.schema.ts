@@ -28,7 +28,7 @@ export const DomainSchema = new Schema(
       required: false,
       index: {
         type: 'global',
-        name: 'domain-idBusinessid-index',
+        name: 'domain-idBusiness-index',
       },
     },
     name: {
@@ -38,10 +38,6 @@ export const DomainSchema = new Schema(
     group: {
       type: String,
       required: false,
-      index: {
-        type: 'global',
-        name: 'domain-group-index',
-      },
     },
     value: {
       type: String,
