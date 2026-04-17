@@ -77,7 +77,7 @@ functions:
             headers:
               - Content-Type
               - Authorization
-            allowCredentials: true
+            allowCredentials: false
       - http:
           path: /api/appointments/{proxy+}
           method: ANY
@@ -86,7 +86,7 @@ functions:
             headers:
               - Content-Type
               - Authorization
-            allowCredentials: true
+            allowCredentials: false
 
 package:
   patterns:
