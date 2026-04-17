@@ -1,11 +1,9 @@
 import { CacheModule } from '@nestjs/cache-manager';
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule } from '@nestjs/config';
 import { DynamooseModule } from 'nestjs-dynamoose';
 import { UserSchema } from '../schemas/user.schema';
 import { BusinessSchema } from '../schemas/business.schema';
-import { JWT_EXPIRATION } from '../core/config/environment.config';
 import { AuthGuard } from '../core/auth/guards/auth.guard';
 
 // Validate schema is loaded correctly
@@ -19,16 +17,6 @@ if (!UserSchema || UserSchema.constructor.name !== 'Schema') {
   imports: [
     ConfigModule,
     CacheModule.register(),
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET'),
-        signOptions: {
-          expiresIn: JWT_EXPIRATION,
-        },
-      }),
-      inject: [ConfigService],
-    }),
     DynamooseModule.forFeature([
       {
         name: 'User',
@@ -62,6 +50,6 @@ if (!UserSchema || UserSchema.constructor.name !== 'Schema') {
     ]),
   ],
   providers: [AuthGuard],
-  exports: [AuthGuard, JwtModule, DynamooseModule, ConfigModule, CacheModule],
+  exports: [AuthGuard, DynamooseModule, ConfigModule, CacheModule],
 })
 export class SharedModule {}
