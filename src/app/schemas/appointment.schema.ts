@@ -29,6 +29,7 @@ export interface Appointment extends AppointmentKey {
   createdAt?: Date;
   updatedAt?: Date;
   googleCalendarId?: string;
+  /** Single event id (legacy) or JSON array string: [{ role: 'employee'|'customer', eventId: string }, ...] */
   googleCalendarEventId?: string;
   // New fields for multiple services and cached names
   customerName?: string;

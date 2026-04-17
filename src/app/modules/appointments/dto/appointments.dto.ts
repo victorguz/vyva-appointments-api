@@ -181,6 +181,21 @@ export class CreateAppointmentDto {
   @IsString()
   @IsOptional()
   googleCalendarEventId?: string;
+
+  @ApiProperty({
+    description:
+      'If true, send Google Calendar invite to the customer; if false, only the assigned employee receives an invite.',
+  })
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === true || value === 'true' || value === 1 || value === '1'
+      ? true
+      : value === false || value === 'false' || value === 0 || value === '0'
+        ? false
+        : value,
+  )
+  sendGoogleCalendar?: boolean;
 }
 export class UpdateAppointmentDto {
   @ApiProperty({ description: 'Appointment start date and time' })
@@ -265,6 +280,21 @@ export class UpdateAppointmentDto {
   @IsString()
   @IsOptional()
   googleCalendarEventId?: string;
+
+  @ApiProperty({
+    description:
+      'If true, send Google Calendar invite to the customer; if false, only the assigned employee receives an invite.',
+  })
+  @IsBoolean()
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === true || value === 'true' || value === 1 || value === '1'
+      ? true
+      : value === false || value === 'false' || value === 0 || value === '0'
+        ? false
+        : value,
+  )
+  sendGoogleCalendar?: boolean;
 }
 
 export class ListAppointmentDto {

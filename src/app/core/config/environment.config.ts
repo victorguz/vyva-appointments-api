@@ -56,7 +56,7 @@ export class EnvironmentVariables {
   REGION: string;
 
   @IsString()
-  VYVA_SUPERADMIN_APIKEY: string;
+  VYVAPOS_ID_BUSINESS: string;
 }
 
 const validationSchema = Joi.object({
@@ -65,7 +65,7 @@ const validationSchema = Joi.object({
   ERROR_LOGS: Joi.boolean().default(false),
   JWT_SECRET: Joi.string().required(),
   SECRET_KEY: Joi.string().required(),
-  VYVA_SUPERADMIN_APIKEY: Joi.string().required(),
+  VYVAPOS_ID_BUSINESS: Joi.string().required(),
   ACCESS_KEY_ID: Joi.string().optional(),
   SECRET_ACCESS_KEY: Joi.string().optional(),
   REGION: Joi.string().optional(),

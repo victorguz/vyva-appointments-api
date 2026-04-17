@@ -16,7 +16,7 @@ export class AuthGuard implements CanActivate {
     private readonly model: Model<User, UserKey>,
     @InjectModel('Business')
     private readonly businessModel: Model<Business, BusinessKey>,
-  ) { }
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
@@ -55,8 +55,8 @@ export class AuthGuard implements CanActivate {
       if (
         ![UserRole.admin, UserRole.superadmin].includes(
           userData.role as UserRole,
-        )
-        || !userData.idBusiness
+        ) ||
+        !userData.idBusiness
       ) {
         throw new Error('MS019');
       }
@@ -74,8 +74,6 @@ export class AuthGuard implements CanActivate {
     }
   }
 
-
-
   private async authenticateByToken(
     request: Request,
     token: string,
@@ -85,6 +83,9 @@ export class AuthGuard implements CanActivate {
         secret: process.env.JWT_SECRET,
       });
       const user = await this.model.get({ id: payload.sub });
+      if (user.role == UserRole.superadmin) {
+        user.idBusiness = payload.idBusiness;
+      }
       console.log('user', user);
       // const user = await this.model.get({
       //   id: 'c8133285-9e16-4379-91b6-dbd8596effaa',
@@ -96,8 +97,8 @@ export class AuthGuard implements CanActivate {
       userData.password = undefined;
       (request as any)['user'] = userData;
       return true;
-    } catch {
-      throw handleError('MS019');
+    } catch (error) {
+      throw handleError(error);
     }
   }
 

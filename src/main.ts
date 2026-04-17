@@ -20,7 +20,7 @@ const cors = {
   origin: getOrigin(),
   methods: 'POST,OPTIONS,GET,PUT,PATCH,DELETE',
   allowedHeaders:
-    'Content-Type, Accept, Authorization, X-Requested-With, Application, Origin, Access-Control-Allow-Origin, Access-Control-Allow-Credentials',
+    'Content-Type, Accept, Authorization, X-Requested-With, Application, Origin, Access-Control-Allow-Origin, Access-Control-Allow-Credentials, x-api-bid, x-api-key, api-key',
 };
 
 function getOrigin() {
