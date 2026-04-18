@@ -4,7 +4,6 @@ import { DynamooseModule } from 'nestjs-dynamoose';
 import { configModuleOptions } from './core/config/environment.config';
 import { dynamooseConfig } from './core/config/dynamoose.config';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
-import { SharedModule } from './shared/shared.module';
 
 @Module({
   imports: [
@@ -15,7 +14,6 @@ import { SharedModule } from './shared/shared.module';
         dynamooseConfig(configService),
       inject: [ConfigService],
     }),
-    SharedModule,
     AppointmentsModule,
   ],
 })

@@ -18,6 +18,7 @@ import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { AppointmentDashboardService } from './appointment-dashboard.service';
 import { CustomerSchema } from 'src/app/schemas/customer.schema';
 import { DomainSchema } from 'src/app/schemas/domain.schema';
+import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
 
 @Module({
   imports: [
@@ -90,6 +91,7 @@ import { DomainSchema } from 'src/app/schemas/domain.schema';
   ],
   controllers: [AppointmentsController, TimeslotsController],
   providers: [
+    AuthGuard,
     AppointmentsService,
     UsersService,
     TimeslotsService,

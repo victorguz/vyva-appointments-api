@@ -113,7 +113,16 @@ functions:
             origin: '*'
             headers:
               - Content-Type
+              - Accept
               - Authorization
+              - X-Requested-With
+              - Application
+              - Origin
+              - Access-Control-Allow-Origin
+              - Access-Control-Allow-Credentials
+              - x-api-bid
+              - x-api-key
+              - api-key
             allowCredentials: false
       - http:
           path: /api/appointments/{proxy+}
@@ -122,7 +131,16 @@ functions:
             origin: '*'
             headers:
               - Content-Type
+              - Accept
               - Authorization
+              - X-Requested-With
+              - Application
+              - Origin
+              - Access-Control-Allow-Origin
+              - Access-Control-Allow-Credentials
+              - x-api-bid
+              - x-api-key
+              - api-key
             allowCredentials: false
 
 package:
