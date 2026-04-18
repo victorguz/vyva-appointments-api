@@ -173,3 +173,57 @@ export function toTitleCase(cad: string, split: string = ' ') {
   }
   return cad;
 }
+
+export function parseDate(date: Date | string | undefined): Date {
+  return date ? moment(date).toDate() : new Date();
+}
+
+/**
+ * Sanitizes a numeric value to prevent Infinity or NaN from being saved to DynamoDB
+ * @param value The numeric value to sanitize
+ * @param defaultValue The default value to use if value is Infinity or NaN (default: 0)
+ * @returns A safe numeric value
+ */
+export function sanitizeNumericValue(
+  value: number,
+  defaultValue: number = 0,
+): number {
+  if (typeof value !== 'number') {
+    return defaultValue;
+  }
+  if (!isFinite(value) || isNaN(value)) {
+    return defaultValue;
+  }
+  return value;
+}
+
+/**
+ * Recursively sanitizes an object to remove Infinity and NaN values
+ * @param obj The object to sanitize
+ * @returns A sanitized object safe for DynamoDB
+ */
+export function sanitizeObjectForDynamoDB(obj: any): any {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+
+  if (typeof obj === 'number') {
+    return sanitizeNumericValue(obj);
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => sanitizeObjectForDynamoDB(item));
+  }
+
+  if (typeof obj === 'object') {
+    const sanitized: any = {};
+    for (const key in obj) {
+      if (Object.hasOwnProperty.call(obj, key)) {
+        sanitized[key] = sanitizeObjectForDynamoDB(obj[key]);
+      }
+    }
+    return sanitized;
+  }
+
+  return obj;
+}

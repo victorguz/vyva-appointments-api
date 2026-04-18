@@ -6,7 +6,7 @@ provider:
   runtime: nodejs20.x
   stage: ${opt:stage, 'qas'} # Default: qas (dev es solo local)
   region: us-east-1
-  memorySize: 512
+  memorySize: 2048
   timeout: 30
 
   environment:
@@ -18,6 +18,7 @@ provider:
     # Parámetros necesarios para autenticación
     JWT_SECRET: ${ssm:/vyva/${self:provider.stage}/VYVA_JWT_SECRET}
     SECRET_KEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SECRET_KEY}
+    VYVAPOS_ID_BUSINESS: ${ssm:/vyva/${self:provider.stage}/VYVAPOS_ID_BUSINESS, ''}
 
   iam:
     role:
@@ -30,8 +31,7 @@ provider:
             - ssm:GetParametersByPath
           Resource:
             - arn:aws:ssm:${self:provider.region}:*:parameter/vyva/${self:provider.stage}/*
-
-        # Permisos para DynamoDB (appointments, customers, users, products, sales-orders)
+        # Permisos para DynamoDB (appointments, customers, users, products)
         - Effect: Allow
           Action:
             - dynamodb:Query
@@ -51,8 +51,45 @@ provider:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-businesses
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-businesses/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains/*
+
+        # Permisos para crear y modificar tablas DynamoDB
+        - Effect: Allow
+          Action:
+            - dynamodb:CreateTable
+            - dynamodb:UpdateTable
+            - dynamodb:DescribeTable
+            - dynamodb:DescribeTimeToLive
+            - dynamodb:UpdateTimeToLive
+            - dynamodb:ListTables
+          Resource:
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-appointments
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-appointments/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-customers
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-customers/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-products/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-businesses
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-businesses/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains/*
+
+        # Permisos para invocar Lambda de integrations
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource:
+            - arn:aws:lambda:${self:provider.region}:*:function:vyva-integrations-${self:provider.stage}-api
+            - arn:aws:lambda:${self:provider.region}:*:function:vyva-domains-${self:provider.stage}-api
 
         # Permisos para logs de CloudWatch
         - Effect: Allow
@@ -65,9 +102,9 @@ provider:
 
 functions:
   api:
-    handler: dist/lambda.handler
+    handler: dist/src/lambda.handler
     layers:
-      - arn:aws:lambda:us-east-1:754881596744:layer:vyva-auth:1
+      - arn:aws:lambda:us-east-1:754881596744:layer:vyva-appointments:1
     events:
       - http:
           path: /api/appointments
@@ -89,13 +126,7 @@ functions:
             allowCredentials: false
 
 package:
+  excludeDevDependencies: true
   patterns:
-    - '!node_modules/**'
-    - '!src/**'
-    - '!*.md'
-    - '!*.json'
-    - '!*.ts'
-    - '!*.tsbuildinfo'
+    - '!**'
     - 'dist/**'
-    - 'package.json'
-    - 'package-lock.json'

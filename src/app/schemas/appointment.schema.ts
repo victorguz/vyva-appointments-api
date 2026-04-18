@@ -6,20 +6,37 @@ export interface AppointmentKey {
   id?: string;
 }
 
+export interface AppointmentService {
+  id: string;
+  name: string;
+  price?: number;
+  offerPrice?: number;
+  measure?: number;
+}
+
 export interface Appointment extends AppointmentKey {
   id: string;
   startDate: Date;
   endDate: Date;
-  idService: string;
+  idService?: string; // Kept for backwards compatibility
   idCustomer?: string;
   idEmployee?: string;
   idOrder?: string;
   status: AppointmentStatus;
-  businessInfoId?: string;
+  idBusiness?: string;
   createdBy?: string;
   modifiedBy?: string;
   createdAt?: Date;
   updatedAt?: Date;
+  googleCalendarId?: string;
+  /** Single event id (legacy) or JSON array string: [{ role: 'employee'|'customer', eventId: string }, ...] */
+  googleCalendarEventId?: string;
+  // New fields for multiple services and cached names
+  customerName?: string;
+  serviceName?: string;
+  employeeName?: string;
+  notes?: string;
+  services?: AppointmentService[]; // Array of services for this appointment
 }
 
 export const AppointmentSchema = new Schema(
@@ -32,10 +49,6 @@ export const AppointmentSchema = new Schema(
     startDate: {
       type: Date,
       required: true,
-      index: {
-        type: 'global',
-        name: 'startDate-index',
-      },
     },
     endDate: {
       type: Date,
@@ -44,10 +57,6 @@ export const AppointmentSchema = new Schema(
     idService: {
       type: String,
       required: false,
-      index: {
-        type: 'global',
-        name: 'service-index',
-      },
     },
     idCustomer: {
       type: String,
@@ -76,18 +85,18 @@ export const AppointmentSchema = new Schema(
     status: {
       type: String,
       required: true,
-      enum: Object.values(AppointmentStatus),
+      enum: Object.values(AppointmentStatus), // Includes timeOut
       index: {
         type: 'global',
         name: 'status-index',
       },
     },
-    businessInfoId: {
+    idBusiness: {
       type: String,
-      required: true,
+      required: false,
       index: {
         type: 'global',
-        name: 'businessInfo-index',
+        name: 'idBusiness-index',
       },
     },
     createdBy: {
@@ -96,6 +105,50 @@ export const AppointmentSchema = new Schema(
     },
     modifiedBy: {
       type: String,
+      required: false,
+    },
+    googleCalendarId: {
+      type: String,
+      required: false,
+    },
+    googleCalendarEventId: {
+      type: String,
+      required: false,
+      index: {
+        type: 'global',
+        name: 'googleEvent-index',
+      },
+    },
+    customerName: {
+      type: String,
+      required: false,
+    },
+    serviceName: {
+      type: String,
+      required: false,
+    },
+    employeeName: {
+      type: String,
+      required: false,
+    },
+    notes: {
+      type: String,
+      required: false,
+    },
+    services: {
+      type: Array,
+      schema: [
+        {
+          type: Object,
+          schema: {
+            id: { type: String, required: true },
+            name: { type: String, required: true },
+            price: { type: Number, required: false },
+            offerPrice: { type: Number, required: false },
+            measure: { type: Number, required: false },
+          },
+        },
+      ],
       required: false,
     },
   },

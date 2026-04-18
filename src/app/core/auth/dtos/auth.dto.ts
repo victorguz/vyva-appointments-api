@@ -25,18 +25,6 @@ export class AuthRequestDto {
   idCompany: number;
 }
 
-export class RefreshTokenRequest {
-  @IsString()
-  @IsEmail()
-  email: string;
-
-  @IsString()
-  password: string;
-
-  @IsNumber()
-  idCompany: number;
-}
-
 export class AuthUser {
   sub: string;
   email: string;

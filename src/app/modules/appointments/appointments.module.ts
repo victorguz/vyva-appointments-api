@@ -1,44 +1,44 @@
 import { Module } from '@nestjs/common';
 import { DynamooseModule } from 'nestjs-dynamoose';
-import { SharedModule } from '../shared/shared.module';
 import { AppointmentSchema } from 'src/app/schemas/appointment.schema';
 import { AppointmentsController } from './appointments.controller';
 import { AppointmentsService } from './appointments.service';
-import { SalesOrderSchema } from 'src/app/schemas/sales-order.schema';
 import { ProductSchema } from 'src/app/schemas/product.schema';
-import { CustomerSchema } from 'src/app/schemas/customer.schema';
 import { UserSchema } from 'src/app/schemas/user.schema';
+import { UsersService } from '../users/users.service';
+import { TimeslotsController } from './timeslots/timeslots.controller';
+import { TimeslotsService } from './timeslots/timeslots.service';
+import { BusinessSchema } from 'src/app/schemas/business.schema';
+import { AppointmentsCustomerService } from './appointments-customer.service';
+import { AppointmentsPublicService } from './appointments-public.service';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
+import { JWT_EXPIRATION } from 'src/app/core/config/environment.config';
+import { LambdaInvokeService } from '../shared/lambda-invoke.service';
+import { AppointmentDashboardService } from './appointment-dashboard.service';
+import { CustomerSchema } from 'src/app/schemas/customer.schema';
+import { DomainSchema } from 'src/app/schemas/domain.schema';
 
 @Module({
   imports: [
-    SharedModule,
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        secret: configService.get('JWT_SECRET'),
+        signOptions: {
+          expiresIn: JWT_EXPIRATION,
+        },
+      }),
+      inject: [ConfigService],
+    }),
     DynamooseModule.forFeature([
       {
         name: 'Appointment',
         schema: AppointmentSchema,
         options: {
           tableName: 'appointments',
-        },
-      },
-      {
-        name: 'SalesOrder',
-        schema: SalesOrderSchema,
-        options: {
-          tableName: 'sales-orders',
-        },
-      },
-      {
-        name: 'Product',
-        schema: ProductSchema,
-        options: {
-          tableName: 'products',
-        },
-      },
-      {
-        name: 'Customer',
-        schema: CustomerSchema,
-        options: {
-          tableName: 'customers',
+          throughput: 'ON_DEMAND',
         },
       },
       {
@@ -46,12 +46,58 @@ import { UserSchema } from 'src/app/schemas/user.schema';
         schema: UserSchema,
         options: {
           tableName: 'users',
+          throughput: 'ON_DEMAND',
+          create: false,
+        },
+      },
+      {
+        name: 'Business',
+        schema: BusinessSchema,
+        options: {
+          tableName: 'businesses',
+          throughput: 'ON_DEMAND',
+          create: false,
+        },
+      },
+      {
+        name: 'Product',
+        schema: ProductSchema,
+        options: {
+          tableName: 'products',
+          throughput: 'ON_DEMAND',
+          create: false,
+        },
+      },
+      {
+        name: 'Customer',
+        schema: CustomerSchema,
+        options: {
+          tableName: 'customers',
+          throughput: 'ON_DEMAND',
+          create: false,
+        },
+      },
+      {
+        name: 'Domain',
+        schema: DomainSchema,
+        options: {
+          tableName: 'domains',
+          throughput: 'ON_DEMAND',
+          create: false,
         },
       },
     ]),
   ],
-  controllers: [AppointmentsController],
-  providers: [AppointmentsService],
+  controllers: [AppointmentsController, TimeslotsController],
+  providers: [
+    AppointmentsService,
+    UsersService,
+    TimeslotsService,
+    AppointmentsCustomerService,
+    AppointmentsPublicService,
+    LambdaInvokeService,
+    AppointmentDashboardService,
+  ],
   exports: [AppointmentsService],
 })
 export class AppointmentsModule {}

@@ -20,7 +20,7 @@ export interface Customer extends CustomerKey {
   city?: string;
   address?: string;
   profilePicture?: string;
-  userId?: string;
+  idUser?: string;
   businessId: string;
   data?: any;
   createdAt: Date;
@@ -103,7 +103,7 @@ export const CustomerSchema = new Schema(
       type: String,
       required: false,
     },
-    userId: {
+    idUser: {
       type: String,
       required: false,
     },

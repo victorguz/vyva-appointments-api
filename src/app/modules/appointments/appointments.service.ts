@@ -1,103 +1,63 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
 import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
-import { SalesOrder, SalesOrderKey } from 'src/app/schemas/sales-order.schema';
-import { User } from 'src/app/schemas/user.schema';
+import { User, UserKey } from 'src/app/schemas/user.schema';
 import { v4 as uuidv4 } from 'uuid';
 
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
-import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
+import {
+  Appointment,
+  AppointmentKey,
+  AppointmentService,
+} from '../../schemas/appointment.schema';
 import { handleError } from '../../shared/error.functions';
-import { deleteEmptyProperties } from '../../shared/shared.functions';
+import {
+  deleteEmptyProperties,
+  sanitizeNumericValue,
+} from '../../shared/shared.functions';
+import {
+  hasCustomerGoogleCalendarEvent,
+  serializeGoogleCalendarEventIds,
+} from '../../shared/google-calendar-event-ids.storage';
+import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import {
   CreateAppointmentDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
 } from './dto/appointments.dto';
-
+import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
 @Injectable()
 export class AppointmentsService extends TransactionSupport {
   constructor(
+    private readonly lambdaInvokeService: LambdaInvokeService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
-    @InjectModel('SalesOrder')
-    private readonly salesOrderModel: Model<SalesOrder, SalesOrderKey>,
-    @InjectModel('Product')
-    private readonly productModel: Model<any, any>,
     @InjectModel('Customer')
-    private readonly customerModel: Model<any, any>,
+    private readonly customerModel: Model<Customer, CustomerKey>,
     @InjectModel('User')
-    private readonly userModel: Model<any, any>,
+    private readonly userModel: Model<User, UserKey>,
   ) {
     super();
   }
 
-  private generateOrderNumber(): string {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substring(2, 7);
-    return `ORD-${timestamp}-${random}`.toUpperCase();
-  }
-
-  async create(
-    body: CreateAppointmentDto,
-    user: User,
-  ): Promise<GenericResponse<Appointment>> {
-    try {
-      const transactions = [];
-      
-      // Crear orden de venta simplificada
-      const orderNumber = this.generateOrderNumber();
-      const paidAmount = body.paymentMethods?.reduce((sum, pm) => sum + (pm.amount || 0), 0) || 0;
-      
-      const salesOrder: SalesOrder = {
-        id: uuidv4(),
-        orderNumber,
-        idCustomer: body.idCustomer,
-        products: [{ id: body.idService, quantity: 1, isService: true, price: 0 }],
-        paymentMethods: body.paymentMethods || [],
-        paidAmount,
-        totalAmount: 0,
-        status: paidAmount === 0 ? 'pending' : 'paid',
-        businessInfoId: user.businessInfoId,
-      } as any;
-
-      const salesTransaction =
-        this.salesOrderModel.transaction.create(salesOrder);
-      transactions.push(salesTransaction);
-
-      let appointment = null;
-      if (body.startDate && body.endDate) {
-        this.validateAppointmentDates(body.startDate, body.endDate);
-
-        appointment = {
-          id: uuidv4(),
-          startDate: new Date(body.startDate).getTime() as any,
-          endDate: new Date(body.endDate).getTime() as any,
-          idService: body.idService,
-          idCustomer: body.idCustomer,
-          idEmployee: body.idEmployee,
-          idOrder: salesOrder.id,
-          status: AppointmentStatus.pending,
-          businessInfoId: user.businessInfoId,
-          createdBy: user.id,
-        };
-
-        const cleanedPayload = deleteEmptyProperties(appointment);
-
-        const appointmentTransaction = this.model.transaction.create(cleanedPayload);
-
-        transactions.push(appointmentTransaction);
-      }
-
-      await this.transaction([...transactions]);
-
-      const appointmentResult = await this.model.get({ id: appointment.id });
-
-      return new GenericResponse(appointmentResult);
-    } catch (error) {
-      throw handleError(error);
-    }
+  private formatServiceNamesSummaryFromServices(
+    services: AppointmentService[],
+  ): string {
+    const names = services.map((s) => (s.name || '').trim()).filter(Boolean);
+    if (names.length === 0) return '';
+    const maxPerName = 28;
+    const ellipsis = '\u2026';
+    const dot = '\u00b7';
+    const truncate = (t: string) =>
+      t.length <= maxPerName
+        ? t
+        : t.slice(0, Math.max(0, maxPerName - 1)) + ellipsis;
+    const parts = names.map(truncate);
+    const joined = parts.join(', ');
+    return names.length > 1
+      ? `${joined} ${dot} ${names.length} \u00edtems`
+      : joined;
   }
 
   async findAll(
@@ -105,52 +65,312 @@ export class AppointmentsService extends TransactionSupport {
     filters?: ListAppointmentDto,
   ): Promise<GenericResponse<Appointment[]>> {
     try {
-      // Validate user and businessInfoId
-      if (!user || !user.businessInfoId) {
+      // Validate user and idBusiness
+      if (!user || !user.idBusiness) {
         throw new Error('MS014');
       }
 
-      let query = this.model.scan();
+      // OPTIMIZACIÓN: Usar query con GSI en lugar de scan
+      let appointments: Appointment[] = [];
 
-      // Apply filters
-      if (filters?.idCustomer) {
-        query = query.where('idCustomer').eq(filters.idCustomer);
-      }
-
-      if (filters?.idEmployee) {
-        query = query.where('idEmployee').eq(filters.idEmployee);
-      }
-
-      // if (filters?.idService) {
-      //   query = query.where('idService').eq(filters.idService);
-      // }
-
+      // Si hay filtro por idOrder, usar order-index (más específico)
       if (filters?.idOrder) {
-        query = query.where('idOrder').eq(filters.idOrder);
+        const orderQuery = await this.model
+          .query('idOrder')
+          .using('order-index')
+          .eq(filters.idOrder)
+          .exec();
+
+        appointments = orderQuery;
+      }
+      // Si hay filtro por idCustomer, usar customer-index
+      else if (filters?.idCustomer) {
+        const customerQuery = await this.model
+          .query('idCustomer')
+          .using('customer-index')
+          .eq(filters.idCustomer)
+          .exec();
+
+        appointments = customerQuery;
+      }
+      // Si hay filtro por idEmployee, usar employee-index
+      else if (filters?.idEmployee) {
+        const employeeQuery = await this.model
+          .query('idEmployee')
+          .using('employee-index')
+          .eq(filters.idEmployee)
+          .exec();
+
+        appointments = employeeQuery;
+      }
+      // Si hay filtro por status, usar status-index
+      else if (filters?.status) {
+        const statusQuery = await this.model
+          .query('status')
+          .using('status-index')
+          .eq(filters.status)
+          .exec();
+
+        appointments = statusQuery;
+      }
+      // Si no hay filtros específicos, usar idBusiness-index como base
+      else {
+        const businessQuery = await this.model
+          .query('idBusiness')
+          .using('idBusiness-index')
+          .eq(user.idBusiness)
+          .exec();
+
+        appointments = businessQuery;
       }
 
-      if (filters?.status) {
-        query = query.where('status').eq(filters.status);
-      }
-
-      // Always filter by business
-      query = query.where('businessInfoId').eq(user.businessInfoId);
-
-      // Apply date range filters
-      if (filters?.startDate) {
-        query = query.where('startDate').ge(new Date(filters.startDate) as any);
-      }
-
-      if (filters?.endDate) {
-        query = query.where('endDate').le(new Date(filters.endDate) as any);
-      }
-
-      const appointments = (await query.exec()).map(
-        (appointment) => appointment as Appointment,
+      return new GenericResponse(
+        appointments
+          .filter(
+            (apt) =>
+              apt.idBusiness === user.idBusiness &&
+              (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
+              (!filters.status || apt.status === filters.status) &&
+              // Fix: Use overlapping logic instead of containment
+              // Appointment overlaps with range if: endDate >= rangeStart && startDate <= rangeEnd
+              (!filters.startDate ||
+                new Date(apt.endDate).getTime() >=
+                  new Date(filters.startDate).getTime()) &&
+              (!filters.endDate ||
+                new Date(apt.startDate).getTime() <=
+                  new Date(filters.endDate).getTime()),
+          )
+          //by createdAt descending
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
       );
-      return new GenericResponse(appointments);
     } catch (error) {
       throw handleError(error);
+    }
+  }
+
+  async findAllByCustomer(user: User): Promise<GenericResponse<Appointment[]>> {
+    try {
+      // Validate user
+      if (!user || !user.id) {
+        throw new Error('MS014');
+      }
+
+      // Use customer-index to query appointments by customer ID
+      const customerQuery = await this.model
+        .query('idCustomer')
+        .using('customer-index')
+        .eq(user.id)
+        .exec();
+
+      return new GenericResponse(customerQuery);
+    } catch (error) {
+      throw handleError(error);
+    }
+  }
+
+  async create(
+    body: CreateAppointmentDto,
+    user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    let appointmentPayload;
+    try {
+      if (!body.startDate || !body.endDate) {
+        throw new Error('MS014'); // Start and end dates are required
+      }
+
+      this.validateAppointmentDates(body.startDate, body.endDate);
+
+      const startDateTimestamp = new Date(body.startDate).getTime();
+      const endDateTimestamp = new Date(body.endDate).getTime();
+
+      // Validate that dates are valid and not Infinity
+      if (
+        !isFinite(startDateTimestamp) ||
+        !isFinite(endDateTimestamp) ||
+        isNaN(startDateTimestamp) ||
+        isNaN(endDateTimestamp)
+      ) {
+        throw new Error('MS042'); // Invalid date format
+      }
+
+      // Process services array or create from single service for backwards compatibility
+      let services = body.services;
+      if (!services || services.length === 0) {
+        // Backwards compatibility: create services array from single idService
+        if (body.idService) {
+          services = [
+            {
+              id: body.idService,
+              name: body.serviceName || '', // Will be populated by sales order
+              price: 0,
+              offerPrice: 0,
+              measure: 0,
+            },
+          ];
+        }
+      }
+
+      // Get customer name if not provided but idCustomer exists
+      let customerName = body.customerName;
+      if (!customerName && body.idCustomer) {
+        customerName = await this.resolveCustomerName(body.idCustomer);
+      }
+
+      // Resolve employeeName from User schema if not provided
+      let employeeName = body.employeeName ?? '';
+      if (!employeeName && body.idEmployee) {
+        employeeName = await this.resolveEmployeeName(body.idEmployee);
+      }
+
+      const appointment: Appointment = {
+        id: uuidv4(),
+        startDate: sanitizeNumericValue(startDateTimestamp) as any,
+        endDate: sanitizeNumericValue(endDateTimestamp) as any,
+        idService:
+          body.idService ||
+          (services && services.length > 0 ? services[0].id : ''),
+        idCustomer: body.idCustomer,
+        idEmployee: body.idEmployee,
+        status: AppointmentStatus.pending,
+        idBusiness: user.idBusiness,
+        createdBy: user.id,
+        googleCalendarId: body.googleCalendarId,
+        googleCalendarEventId: body.googleCalendarEventId,
+        customerName: customerName,
+        serviceName: body.serviceName || body.services?.[0]?.name || '',
+        employeeName: employeeName,
+        notes: body.notes,
+        services: services,
+      };
+
+      // Prepare products for sales order from services array
+      const products = services?.map((service) => ({
+        id: service.id,
+        quantity: 1,
+      })) || [{ id: body.idService, quantity: 1 }];
+
+      appointmentPayload = deleteEmptyProperties({
+        ...appointment,
+      });
+
+      await this.transaction([
+        this.model.transaction.create(appointmentPayload),
+      ]);
+
+      const appointmentData = await this.model.get({ id: appointment.id });
+      await this.syncAppointmentToGoogleCalendar(
+        appointmentData.toJSON() as Appointment,
+        user,
+        body.sendGoogleCalendar ?? false,
+      );
+      return new GenericResponse(appointmentData);
+    } catch (error) {
+      if (appointmentPayload) await this.model.delete(appointmentPayload);
+      throw handleError(error);
+    }
+  }
+
+  async createTimeOutAppointment(
+    body: CreateAppointmentDto,
+    user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    let appointmentPayload;
+    try {
+      if (!body.startDate || !body.endDate) {
+        throw new Error('MS014'); // Start and end dates are required
+      }
+
+      this.validateAppointmentDates(body.startDate, body.endDate);
+
+      const startDateTimestamp = new Date(body.startDate).getTime();
+      const endDateTimestamp = new Date(body.endDate).getTime();
+
+      // Validate that dates are valid and not Infinity
+      if (
+        !isFinite(startDateTimestamp) ||
+        !isFinite(endDateTimestamp) ||
+        isNaN(startDateTimestamp) ||
+        isNaN(endDateTimestamp)
+      ) {
+        throw new Error('MS042'); // Invalid date format
+      }
+
+      // Get customer name if not provided but idCustomer exists
+      let customerName = body.customerName;
+      if (!customerName && body.idCustomer) {
+        customerName = await this.resolveCustomerName(body.idCustomer);
+      }
+
+      const appointment = {
+        id: uuidv4(),
+        startDate: sanitizeNumericValue(startDateTimestamp) as any,
+        endDate: sanitizeNumericValue(endDateTimestamp) as any,
+        idCustomer: body.idCustomer,
+        idEmployee: body.idEmployee,
+        status: AppointmentStatus.timeOut, // Status específico para appointments sin servicio
+        idBusiness: user.idBusiness,
+        createdBy: user.id,
+        googleCalendarId: body.googleCalendarId,
+        googleCalendarEventId: body.googleCalendarEventId,
+        customerName: customerName,
+        serviceName: body.serviceName || '',
+        notes: body.notes,
+        services: [] as AppointmentService[], // Sin servicios
+      };
+
+      appointmentPayload = deleteEmptyProperties(appointment);
+
+      await this.model.create(appointmentPayload);
+
+      const appointmentData = await this.model.get({ id: appointment.id });
+      await this.syncAppointmentToGoogleCalendar(
+        appointmentData.toJSON() as Appointment,
+        user,
+        body.sendGoogleCalendar ?? false,
+      );
+      return new GenericResponse(appointmentData);
+    } catch (error) {
+      if (appointmentPayload) await this.model.delete(appointmentPayload);
+
+      throw handleError(error);
+    }
+  }
+
+  /**
+   * Sync appointment to Google Calendar Vyva calendar
+   */
+  private async syncAppointmentToGoogleCalendar(
+    appointment: Appointment,
+    user: User,
+    sendGoogleCalendar: boolean,
+  ): Promise<void> {
+    try {
+      const result = await this.lambdaInvokeService.invokeFunction(
+        'vyva-integrations',
+        'POST',
+        '/api/integrations/google-calendar/events/vyva',
+        {
+          appointmentId: appointment.id,
+          sendGoogleCalendar,
+        },
+        user,
+      );
+
+      if (result.data?.eventId) {
+        await this.model.update(
+          { id: appointment.id },
+          {
+            googleCalendarEventId: serializeGoogleCalendarEventIds(
+              result.data.eventId,
+              result.data.customerEventId || null,
+            ),
+          },
+        );
+        console.log('[syncAppointmentToGoogleCalendar] Synced successfully');
+      }
+    } catch (error) {
+      console.error('[syncAppointmentToGoogleCalendar] Error:', error);
+      // throw error;
     }
   }
 
@@ -164,126 +384,100 @@ export class AppointmentsService extends TransactionSupport {
       if (!id) {
         throw new Error('MS014');
       }
-
-      const appointmentResult = await this.model
-        .scan()
-        .where('id')
-        .eq(id)
-        .where('businessInfoId')
-        .eq(user.businessInfoId)
-        .exec();
-
-      if (!appointmentResult || appointmentResult.length === 0) {
+      // OPTIMIZACIÓN: Usar get() en lugar de scan() para búsqueda por ID (clave primaria)
+      const appointment = await this.model.get({ id });
+      if (!appointment) {
         throw new Error('MS007');
       }
-
-      const appointment = appointmentResult[0] as Appointment;
-      const transactions: any[] = [];
-
-      // Separate paymentMethods from other fields
+      const previousAppointment = appointment.toJSON() as Appointment;
+      // Validar que pertenece al negocio del usuario
+      if (appointment.idBusiness !== user.idBusiness) {
+        throw new Error('MS007');
+      }
+      // Only validate dates if both are provided in the update
+      if (updateAppointmentDto.startDate && updateAppointmentDto.endDate) {
+        this.validateAppointmentDates(
+          updateAppointmentDto.startDate,
+          updateAppointmentDto.endDate,
+        );
+      }
       const cleanedUpdateDto = deleteEmptyProperties(updateAppointmentDto);
-      const { paymentMethods, ...cleanedDto } = cleanedUpdateDto as any;
+      // Preserve notes when explicitly set (even to empty string) so clearing works
+      if ('notes' in updateAppointmentDto) {
+        (cleanedUpdateDto as any).notes = updateAppointmentDto.notes ?? '';
+      }
+      const cleanedDto = cleanedUpdateDto;
+      delete (cleanedDto as any).sendGoogleCalendar;
 
-      // Handle date conversions and validation
+      // Handle date conversions - convert string dates to Date objects for Dynamoose
       if (cleanedDto.startDate) {
-        cleanedDto.startDate = new Date(cleanedDto.startDate) as any;
+        const startDate = new Date(cleanedDto.startDate);
+        if (isNaN(startDate.getTime())) {
+          throw new Error('MS042'); // Invalid date format
+        }
+        cleanedDto.startDate = startDate;
       }
       if (cleanedDto.endDate) {
-        cleanedDto.endDate = new Date(cleanedDto.endDate) as any;
+        const endDate = new Date(cleanedDto.endDate);
+        if (isNaN(endDate.getTime())) {
+          throw new Error('MS042'); // Invalid date format
+        }
+        cleanedDto.endDate = endDate;
       }
 
-      // Validate dates if both are provided
-      if (cleanedDto.startDate && cleanedDto.endDate) {
-        this.validateAppointmentDates(
-          cleanedDto.startDate.toString(),
-          cleanedDto.endDate.toString(),
+      // Calculate serviceName if services are provided
+      if (cleanedDto.services && cleanedDto.services.length > 0) {
+        cleanedDto.serviceName = this.formatServiceNamesSummaryFromServices(
+          cleanedDto.services,
+        );
+
+        // Update idService for backwards compatibility
+        cleanedDto.idService = cleanedDto.services[0].id;
+      }
+
+      // Resolve customerName from Customer schema if idCustomer is updated but name not provided
+      if (cleanedDto.idCustomer && !cleanedDto.customerName) {
+        cleanedDto.customerName = await this.resolveCustomerName(
+          cleanedDto.idCustomer,
         );
       }
 
-      // Handle payment methods update if provided
-      if (paymentMethods && paymentMethods.length > 0) {
-        let orderId = appointment.idOrder;
-
-        if (!orderId) {
-          // Create new order if none exists
-          const orderNumber = this.generateOrderNumber();
-          const paidAmount = paymentMethods.reduce((sum: number, pm: any) => sum + (pm.amount || 0), 0);
-          
-          const newOrder: SalesOrder = {
-            id: uuidv4(),
-            orderNumber,
-            idCustomer: appointment.idCustomer || '',
-            products: [{ id: appointment.idService, quantity: 1, isService: true, price: 0 }],
-            paymentMethods: paymentMethods,
-            paidAmount,
-            totalAmount: 0,
-            status: paidAmount === 0 ? 'pending' : 'paid',
-            businessInfoId: user.businessInfoId,
-          } as any;
-
-          const orderCreateTx =
-            this.salesOrderModel.transaction.create(newOrder);
-          transactions.push(orderCreateTx);
-
-          // Update appointment with new order ID
-          cleanedDto.idOrder = newOrder.id;
-        } else {
-          // Update existing order - only update payment-related fields
-          const existingOrder = await this.salesOrderModel.get({
-            id: orderId,
-          });
-          if (!existingOrder) {
-            throw new Error('MS007');
-          }
-
-          const orderData = existingOrder.toJSON() as SalesOrder;
-
-          // Calculate new values based on payment methods
-          const paidAmount = this.calculatePaidAmount(paymentMethods);
-          const totalAmount = orderData.totalAmount || 0;
-          const orderStatus =
-            paidAmount === 0
-              ? 'pending'
-              : paidAmount === totalAmount
-              ? 'paid'
-              : 'partiallyPaid';
-
-          // Only update payment-related fields, keep existing id, orderNumber, products, etc.
-          const orderUpdateTx = this.salesOrderModel.transaction.update(
-            { id: orderId },
-            {
-              paymentMethods: paymentMethods,
-              paidAmount: paidAmount,
-              status: orderStatus,
-              modifiedBy: user.id,
-            } as any,
-          );
-          transactions.push(orderUpdateTx);
-        }
+      // Resolve employeeName from User schema if idEmployee is updated but name not provided
+      if (cleanedDto.idEmployee && !cleanedDto.employeeName) {
+        cleanedDto.employeeName = await this.resolveEmployeeName(
+          cleanedDto.idEmployee,
+        );
       }
 
-      // Update appointment fields if there are any changes
-      if (Object.keys(cleanedDto).length > 0) {
-        const appointmentUpdateTx = this.model.transaction.update(
+      // Prepare sales order updates only if appointment has an order
+      const transactionItems: any[] = [
+        this.model.transaction.update(
           { id: appointment.id },
           { ...cleanedDto, modifiedBy: user.id },
+        ),
+      ];
+
+      // Update appointment fields if there are any changes
+      await this.transaction(transactionItems);
+
+      const appointmentData = await this.model.get({ id: appointment.id });
+      const sendGoogleCalendar =
+        updateAppointmentDto.sendGoogleCalendar !== undefined
+          ? updateAppointmentDto.sendGoogleCalendar
+          : hasCustomerGoogleCalendarEvent(
+              previousAppointment.googleCalendarEventId,
+            );
+      try {
+        await this.syncAppointmentToGoogleCalendar(
+          appointmentData.toJSON() as Appointment,
+          user,
+          sendGoogleCalendar,
         );
-        transactions.push(appointmentUpdateTx);
+      } catch (error) {
+        console.error('[create] Failed to sync with Google Calendar:', error);
+        // Don't fail appointment creation if Google sync fails
       }
-
-      // Execute transaction if there are any operations
-      if (transactions.length > 0) {
-        await this.transaction(transactions);
-      }
-
-      // Return updated appointment
-      const updatedAppointment = await this.model.get({ id: appointment.id });
-
-      if (!updatedAppointment) {
-        throw new Error('MS007');
-      }
-
-      return new GenericResponse(updatedAppointment as Appointment);
+      return new GenericResponse(appointmentData);
     } catch (error) {
       throw handleError(error);
     }
@@ -292,6 +486,7 @@ export class AppointmentsService extends TransactionSupport {
   async updateStatus(
     id: string,
     updateStatusDto: UpdateAppointmentStatusDto,
+    user?: User,
   ): Promise<GenericResponse<Appointment>> {
     try {
       // Validate id and status
@@ -300,6 +495,28 @@ export class AppointmentsService extends TransactionSupport {
       }
       if (!updateStatusDto.status) {
         throw new Error('MS014');
+      }
+
+      // Get the appointment to validate ownership
+      const appointment = await this.model.get({ id });
+
+      if (!appointment) {
+        throw new Error('MS007');
+      }
+
+      // If user is provided, validate ownership
+      if (user) {
+        // If user has idBusiness, they're a business user - validate business ownership
+        if (user.idBusiness) {
+          if (appointment.idBusiness !== user.idBusiness) {
+            throw new Error('MS007');
+          }
+        } else {
+          // User is a customer - validate customer ownership
+          if (appointment.idCustomer !== user.id) {
+            throw new Error('MS007');
+          }
+        }
       }
 
       const updateData: any = { status: updateStatusDto.status };
@@ -315,7 +532,15 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS007');
       }
 
-      return new GenericResponse(updatedAppointment as Appointment);
+      const appointmentData = updatedAppointment.toJSON() as Appointment;
+
+      // Invoke Lambda to sync with Google Calendar asynchronously
+      await this.lambdaInvokeService.invokeGoogleCalendarSync(
+        appointmentData,
+        'update',
+      );
+
+      return new GenericResponse(appointmentData);
     } catch (error) {
       throw handleError(error);
     }
@@ -338,7 +563,11 @@ export class AppointmentsService extends TransactionSupport {
   private validateAppointmentDates(startDate: string, endDate: string): void {
     const start = new Date(startDate);
     const end = new Date(endDate);
-
+    console.log('start', start);
+    console.log('end', end);
+    console.log('isNaN(start.getTime())', isNaN(start.getTime()));
+    console.log('isNaN(end.getTime())', isNaN(end.getTime()));
+    console.log('start >= end', start >= end);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       throw new Error('MS042');
     }
@@ -346,14 +575,35 @@ export class AppointmentsService extends TransactionSupport {
     if (start >= end) {
       throw new Error('MS041');
     }
+    console.log('validateAppointmentDates');
   }
 
-  private calculatePaidAmount(
-    paymentMethods: Array<{ value: number }>,
-  ): number {
-    return (paymentMethods || []).reduce(
-      (acc, item) => acc + (item?.value || 0),
-      0,
-    );
+  private async resolveCustomerName(idCustomer: string): Promise<string> {
+    try {
+      const customer = await this.customerModel.get({ id: idCustomer });
+      if (!customer) return '';
+      const customerData = customer.toJSON();
+      return (
+        [customerData.firstName, customerData.lastName]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || 'Sin nombre'
+      );
+    } catch (error) {
+      console.error('[resolveCustomerName] Error:', error);
+      return '';
+    }
+  }
+
+  private async resolveEmployeeName(idEmployee: string): Promise<string> {
+    try {
+      const employee = await this.userModel.get({ id: idEmployee });
+      if (!employee) return '';
+      const employeeData = employee.toJSON();
+      return employeeData.name || employeeData.email || '';
+    } catch (error) {
+      console.error('[resolveEmployeeName] Error:', error);
+      return '';
+    }
   }
 }

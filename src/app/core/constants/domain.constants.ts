@@ -61,4 +61,7 @@ export enum AppointmentStatus {
   pending = 'pending',
   confirmed = 'confirmed',
   canceled = 'canceled',
+  completed = 'completed',
+  canceledByCustomer = 'canceledByCustomer',
+  timeOut = 'timeOut',
 }

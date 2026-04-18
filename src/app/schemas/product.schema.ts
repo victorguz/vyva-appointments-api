@@ -1,6 +1,9 @@
 import { Schema } from 'dynamoose';
 
-import { MeasurementUnits, ProductStatus } from '../core/constants/domain.constants';
+import {
+  MeasurementUnits,
+  ProductStatus,
+} from '../core/constants/domain.constants';
 
 export interface ProductKey {
   id: string;
@@ -11,22 +14,30 @@ export interface Product extends ProductKey {
   image?: string | null;
   description?: string;
   measure: number;
-  commissions?: number;
+
   unit: MeasurementUnits;
   sku?: string;
   status: ProductStatus;
   isService: boolean;
   isSubscription: boolean;
-  subscriptionDays?: number;
   requireStock?: boolean;
+  /**Precio de venta */
   price?: number;
+  /**Precio de oferta */
   offerPrice?: number;
+  /**Precio de costo */
+  costPrice?: number;
+  /**Comisiones */
+  commissions?: number;
+  /**Stock / cantidad disponible*/
   stock?: number;
-  businessInfoId: string;
+  idBusiness: string;
+  categories?: string[];
   createdBy?: string;
   modifiedBy?: string;
   createdAt: Date;
   updatedAt: Date;
+  type: string;
 }
 
 export const ProductSchema = new Schema(
@@ -56,6 +67,12 @@ export const ProductSchema = new Schema(
     commissions: {
       type: Number,
       required: false,
+      default: 0,
+    },
+    costPrice: {
+      type: Number,
+      required: false,
+      default: 0,
     },
     unit: {
       type: String,
@@ -77,17 +94,14 @@ export const ProductSchema = new Schema(
       required: true,
       default: ProductStatus.draft,
     },
+    isService: {
+      type: Boolean,
+      required: true,
+    },
     isSubscription: {
       type: Boolean,
       required: true,
-    },
-    subscriptionDays: {
-      type: Number,
-      required: false,
-    },
-    isService:{
-      type: Boolean,
-      required: true,
+      default: false,
     },
     requireStock: {
       type: Boolean,
@@ -107,13 +121,19 @@ export const ProductSchema = new Schema(
       required: false,
       default: 0,
     },
-    businessInfoId: {
+    idBusiness: {
       type: String,
-      required: true,
+      required: false,
       index: {
         type: 'global',
-        name: 'businessInfo-index',
+        name: 'idBusiness-index',
       },
+    },
+    categories: {
+      type: Array,
+      schema: [String],
+      required: false,
+      default: [],
     },
     createdBy: {
       type: String,
@@ -128,4 +148,3 @@ export const ProductSchema = new Schema(
     timestamps: true,
   },
 );
-
