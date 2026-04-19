@@ -31,6 +31,8 @@ export interface Appointment extends AppointmentKey {
   googleCalendarId?: string;
   /** Single event id (legacy) or JSON array string: [{ role: 'employee'|'customer', eventId: string }, ...] */
   googleCalendarEventId?: string;
+  googleCalendarEmployeeEventId?: string;
+  googleCalendarCustomerEventId?: string;
   // New fields for multiple services and cached names
   customerName?: string;
   serviceName?: string;
@@ -118,6 +120,14 @@ export const AppointmentSchema = new Schema(
         type: 'global',
         name: 'googleEvent-index',
       },
+    },
+    googleCalendarEmployeeEventId: {
+      type: String,
+      required: false,
+    },
+    googleCalendarCustomerEventId: {
+      type: String,
+      required: false,
     },
     customerName: {
       type: String,

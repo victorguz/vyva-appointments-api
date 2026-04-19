@@ -170,11 +170,21 @@ export class AppointmentsCustomerService extends TransactionSupport {
 
       const appointmentData = updatedAppointment.toJSON() as Appointment;
 
-      // Invoke Lambda to sync with Google Calendar asynchronously
-      await this.lambdaInvokeService.invokeGoogleCalendarSync(
-        appointmentData,
-        'update',
-      );
+      // Sync with Google Calendar (fire-and-forget, don't fail if sync fails)
+      try {
+        await this.lambdaInvokeService.invokeFunction(
+          'vyva-integrations',
+          'POST',
+          '/api/integrations/google-calendar/events/vyva',
+          { appointmentId: appointmentData.id, sendGoogleCalendar: true },
+          user,
+        );
+      } catch (syncError) {
+        console.error(
+          '[cancelAppointment] Google Calendar sync failed:',
+          syncError,
+        );
+      }
 
       return new GenericResponse(appointmentData);
     } catch (error) {

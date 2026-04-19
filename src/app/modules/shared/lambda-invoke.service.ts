@@ -2,72 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { User } from 'src/app/schemas/user.schema';
-import * as jwt from 'jsonwebtoken';
 
 @Injectable()
 export class LambdaInvokeService {
   private lambdaClient: LambdaClient;
-  private integrationsLambdaName: string;
-  private jwtSecret: string;
 
   constructor(private readonly configService: ConfigService) {
     const region = this.configService.get<string>('REGION') || 'us-east-1';
-    const stage = this.configService.get<string>('NODE_ENV') || 'qas';
 
     this.lambdaClient = new LambdaClient({ region });
-    // Lambda name format: vyva-integrations-{stage}-api
-    this.integrationsLambdaName = `vyva-integrations-${stage}-api`;
-    this.jwtSecret = this.configService.get<string>('JWT_SECRET') || '';
-  }
-
-  /**
-   * Invoke integrations Lambda to create/update Google Calendar event
-   */
-  async invokeGoogleCalendarSync(
-    appointment: any,
-    action: 'create' | 'update',
-  ): Promise<void> {
-    try {
-      // Simulate API Gateway event structure
-      const fakeApiGatewayEvent = {
-        path: `/integrations/google-calendar/appointment-sync`,
-        httpMethod: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          appointmentId: appointment.id,
-          idBusiness: appointment.idBusiness,
-          action, // 'create' or 'update'
-          appointment: {
-            id: appointment.id,
-            startDate: appointment.startDate,
-            endDate: appointment.endDate,
-            idService: appointment.idService,
-            idCustomer: appointment.idCustomer,
-            idEmployee: appointment.idEmployee,
-            status: appointment.status,
-            idBusiness: appointment.idBusiness,
-          },
-        }),
-      };
-
-      const command = new InvokeCommand({
-        FunctionName: this.integrationsLambdaName,
-        InvocationType: 'Event', // Asynchronous (Fire and Forget)
-        Payload: Buffer.from(JSON.stringify(fakeApiGatewayEvent)),
-      });
-
-      // Invoke lambda asynchronously - returns immediately
-      await this.lambdaClient.send(command);
-
-      console.log(
-        `Google Calendar sync invoked for appointment ${appointment.id} (${action})`,
-      );
-    } catch (error) {
-      // Log error but don't throw - appointment creation should still succeed
-      console.error('Error invoking Google Calendar sync Lambda:', error);
-    }
   }
 
   /**
@@ -90,37 +33,36 @@ export class LambdaInvokeService {
       const stage = this.configService.get<string>('NODE_ENV') || 'qas';
       const fullLambdaName = `${lambdaName}-${stage}-api`;
 
-      // Generate JWT token for the user
-      const token = jwt.sign(
-        {
-          sub: user.id, // Use 'sub' (subject) as per JWT standard
-          idBusiness: user.idBusiness,
-          email: user.email,
-        },
-        this.jwtSecret,
-        { expiresIn: '1h' },
-      );
+      const edgeUserContext = JSON.stringify({
+        sub: user.id,
+        idBusiness: user.idBusiness,
+        role: (user as any).role,
+        email: user.email,
+        authType: 'jwt',
+      });
 
-      // Simulate API Gateway event structure
-      const apiGatewayEvent = {
-        path: path.startsWith('/') ? path : `/${path}`,
+      const event = {
         httpMethod: method,
+        path: path.startsWith('/') ? path : `/${path}`,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          'x-vyva-user': edgeUserContext,
         },
+        multiValueHeaders: {} as Record<string, string[]>,
+        queryStringParameters: {} as Record<string, string>,
+        multiValueQueryStringParameters: null as null,
+        pathParameters: null as null,
+        stageVariables: null as null,
+        requestContext: {} as any,
+        resource: '',
+        isBase64Encoded: false,
         body: JSON.stringify(body),
-        requestContext: {
-          authorizer: {
-            principalId: user.id,
-          },
-        },
       };
 
       const command = new InvokeCommand({
         FunctionName: fullLambdaName,
         InvocationType: 'RequestResponse', // Synchronous
-        Payload: Buffer.from(JSON.stringify(apiGatewayEvent)),
+        Payload: Buffer.from(JSON.stringify(event)),
       });
 
       const response = await this.lambdaClient.send(command);

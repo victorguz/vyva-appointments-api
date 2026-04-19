@@ -141,7 +141,10 @@ export class CreateAppointmentDto {
   @IsOptional()
   notes?: string;
 
-  @ApiProperty({ description: 'Array of services', type: [AppointmentServiceDto] })
+  @ApiProperty({
+    description: 'Array of services',
+    type: [AppointmentServiceDto],
+  })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => AppointmentServiceDto)
@@ -181,6 +184,16 @@ export class CreateAppointmentDto {
   @IsString()
   @IsOptional()
   googleCalendarEventId?: string;
+
+  @ApiProperty({ description: 'Google Calendar Employee Event ID (if linked)' })
+  @IsString()
+  @IsOptional()
+  googleCalendarEmployeeEventId?: string;
+
+  @ApiProperty({ description: 'Google Calendar Customer Event ID (if linked)' })
+  @IsString()
+  @IsOptional()
+  googleCalendarCustomerEventId?: string;
 
   @ApiProperty({
     description:
@@ -236,7 +249,10 @@ export class UpdateAppointmentDto {
   @IsOptional()
   serviceName?: string;
 
-  @ApiProperty({ description: 'Array of services', type: [AppointmentServiceDto] })
+  @ApiProperty({
+    description: 'Array of services',
+    type: [AppointmentServiceDto],
+  })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => AppointmentServiceDto)
@@ -280,6 +296,16 @@ export class UpdateAppointmentDto {
   @IsString()
   @IsOptional()
   googleCalendarEventId?: string;
+
+  @ApiProperty({ description: 'Google Calendar Employee Event ID (if linked)' })
+  @IsString()
+  @IsOptional()
+  googleCalendarEmployeeEventId?: string;
+
+  @ApiProperty({ description: 'Google Calendar Customer Event ID (if linked)' })
+  @IsString()
+  @IsOptional()
+  googleCalendarCustomerEventId?: string;
 
   @ApiProperty({
     description:

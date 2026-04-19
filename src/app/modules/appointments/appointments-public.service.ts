@@ -76,11 +76,23 @@ export class AppointmentsPublicService extends TransactionSupport {
       const appointmentResult = await this.model.get({ id: appointment.id });
       const appointmentData = appointmentResult.toJSON() as Appointment;
 
-      // Invoke Lambda to sync with Google Calendar asynchronously
-      await this.lambdaInvokeService.invokeGoogleCalendarSync(
-        appointmentData,
-        'create',
-      );
+      // Sync with Google Calendar (fire-and-forget, don't fail if sync fails)
+      try {
+        const syntheticUser = {
+          id: 'public',
+          idBusiness: appointmentData.idBusiness,
+          email: '',
+        } as User;
+        await this.lambdaInvokeService.invokeFunction(
+          'vyva-integrations',
+          'POST',
+          '/api/integrations/google-calendar/events/vyva',
+          { appointmentId: appointmentData.id, sendGoogleCalendar: false },
+          syntheticUser,
+        );
+      } catch (syncError) {
+        console.error('[createPublic] Google Calendar sync failed:', syncError);
+      }
 
       return new GenericResponse(appointmentData);
     } catch (error) {

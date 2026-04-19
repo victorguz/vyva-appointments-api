@@ -41,6 +41,9 @@ export class AppointmentsService extends TransactionSupport {
     super();
   }
 
+  private static readonly GOOGLE_SYNC_WARNING_MESSAGE =
+    'Cita guardada, pero no se pudo sincronizar con Google Calendar';
+
   private formatServiceNamesSummaryFromServices(
     services: AppointmentService[],
   ): string {
@@ -73,74 +76,45 @@ export class AppointmentsService extends TransactionSupport {
       // OPTIMIZACIÓN: Usar query con GSI en lugar de scan
       let appointments: Appointment[] = [];
 
-      // Si hay filtro por idOrder, usar order-index (más específico)
+      // Base query: siempre usar idBusiness-index como principal
+      let businessQuery = this.model
+        .query('idBusiness')
+        .using('idBusiness-index')
+        .eq(user.idBusiness);
+
+      // Filtros acumulativos sobre la misma query
       if (filters?.idOrder) {
-        const orderQuery = await this.model
-          .query('idOrder')
-          .using('order-index')
-          .eq(filters.idOrder)
-          .exec();
-
-        appointments = orderQuery;
+        businessQuery = businessQuery.where('idOrder').eq(filters.idOrder);
       }
-      // Si hay filtro por idCustomer, usar customer-index
-      else if (filters?.idCustomer) {
-        const customerQuery = await this.model
-          .query('idCustomer')
-          .using('customer-index')
-          .eq(filters.idCustomer)
-          .exec();
-
-        appointments = customerQuery;
+      if (filters?.idCustomer) {
+        businessQuery = businessQuery
+          .where('idCustomer')
+          .eq(filters.idCustomer);
       }
-      // Si hay filtro por idEmployee, usar employee-index
-      else if (filters?.idEmployee) {
-        const employeeQuery = await this.model
-          .query('idEmployee')
-          .using('employee-index')
-          .eq(filters.idEmployee)
-          .exec();
-
-        appointments = employeeQuery;
+      if (filters?.idEmployee) {
+        businessQuery = businessQuery
+          .where('idEmployee')
+          .eq(filters.idEmployee);
       }
-      // Si hay filtro por status, usar status-index
-      else if (filters?.status) {
-        const statusQuery = await this.model
-          .query('status')
-          .using('status-index')
-          .eq(filters.status)
-          .exec();
-
-        appointments = statusQuery;
+      if (filters?.status) {
+        businessQuery = businessQuery.where('status').eq(filters.status);
       }
-      // Si no hay filtros específicos, usar idBusiness-index como base
-      else {
-        const businessQuery = await this.model
-          .query('idBusiness')
-          .using('idBusiness-index')
-          .eq(user.idBusiness)
-          .exec();
-
-        appointments = businessQuery;
+      if (filters?.startDate) {
+        businessQuery = businessQuery
+          .where('endDate')
+          .ge(new Date(filters.startDate).getTime());
       }
+      if (filters?.endDate) {
+        businessQuery = businessQuery
+          .where('startDate')
+          .le(new Date(filters.endDate).getTime());
+      }
+
+      appointments = await businessQuery.exec();
 
       return new GenericResponse(
         appointments
-          .filter(
-            (apt) =>
-              apt.idBusiness === user.idBusiness &&
-              (!filters.idEmployee || apt.idEmployee === filters.idEmployee) &&
-              (!filters.status || apt.status === filters.status) &&
-              // Fix: Use overlapping logic instead of containment
-              // Appointment overlaps with range if: endDate >= rangeStart && startDate <= rangeEnd
-              (!filters.startDate ||
-                new Date(apt.endDate).getTime() >=
-                  new Date(filters.startDate).getTime()) &&
-              (!filters.endDate ||
-                new Date(apt.startDate).getTime() <=
-                  new Date(filters.endDate).getTime()),
-          )
-          //by createdAt descending
+          // by createdAt descending
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
       );
     } catch (error) {
@@ -236,6 +210,8 @@ export class AppointmentsService extends TransactionSupport {
         createdBy: user.id,
         googleCalendarId: body.googleCalendarId,
         googleCalendarEventId: body.googleCalendarEventId,
+        googleCalendarEmployeeEventId: body.googleCalendarEventId,
+        googleCalendarCustomerEventId: undefined,
         customerName: customerName,
         serviceName: body.serviceName || body.services?.[0]?.name || '',
         employeeName: employeeName,
@@ -258,12 +234,22 @@ export class AppointmentsService extends TransactionSupport {
       ]);
 
       const appointmentData = await this.model.get({ id: appointment.id });
-      await this.syncAppointmentToGoogleCalendar(
+      const syncResult = await this.syncAppointmentToGoogleCalendar(
         appointmentData.toJSON() as Appointment,
         user,
         body.sendGoogleCalendar ?? false,
       );
-      return new GenericResponse(appointmentData);
+
+      console.log({ syncResult });
+      const appointmentWithSync = await this.model.get({ id: appointment.id });
+
+      return syncResult.synced
+        ? new GenericResponse(appointmentWithSync)
+        : new GenericResponse(
+            appointmentWithSync,
+            true,
+            AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
+          );
     } catch (error) {
       if (appointmentPayload) await this.model.delete(appointmentPayload);
       throw handleError(error);
@@ -301,7 +287,7 @@ export class AppointmentsService extends TransactionSupport {
         customerName = await this.resolveCustomerName(body.idCustomer);
       }
 
-      const appointment = {
+      const appointment: Appointment = {
         id: uuidv4(),
         startDate: sanitizeNumericValue(startDateTimestamp) as any,
         endDate: sanitizeNumericValue(endDateTimestamp) as any,
@@ -312,6 +298,8 @@ export class AppointmentsService extends TransactionSupport {
         createdBy: user.id,
         googleCalendarId: body.googleCalendarId,
         googleCalendarEventId: body.googleCalendarEventId,
+        googleCalendarEmployeeEventId: body.googleCalendarEventId,
+        googleCalendarCustomerEventId: undefined,
         customerName: customerName,
         serviceName: body.serviceName || '',
         notes: body.notes,
@@ -323,12 +311,19 @@ export class AppointmentsService extends TransactionSupport {
       await this.model.create(appointmentPayload);
 
       const appointmentData = await this.model.get({ id: appointment.id });
-      await this.syncAppointmentToGoogleCalendar(
+      const syncResult = await this.syncAppointmentToGoogleCalendar(
         appointmentData.toJSON() as Appointment,
         user,
         body.sendGoogleCalendar ?? false,
       );
-      return new GenericResponse(appointmentData);
+      const appointmentWithSync = await this.model.get({ id: appointment.id });
+      return syncResult.synced
+        ? new GenericResponse(appointmentWithSync)
+        : new GenericResponse(
+            appointmentWithSync,
+            true,
+            AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
+          );
     } catch (error) {
       if (appointmentPayload) await this.model.delete(appointmentPayload);
 
@@ -343,7 +338,7 @@ export class AppointmentsService extends TransactionSupport {
     appointment: Appointment,
     user: User,
     sendGoogleCalendar: boolean,
-  ): Promise<void> {
+  ): Promise<{ synced: boolean; warningMessage?: string }> {
     try {
       const result = await this.lambdaInvokeService.invokeFunction(
         'vyva-integrations',
@@ -355,7 +350,7 @@ export class AppointmentsService extends TransactionSupport {
         },
         user,
       );
-
+      console.log({ result });
       if (result.data?.eventId) {
         await this.model.update(
           { id: appointment.id },
@@ -364,13 +359,23 @@ export class AppointmentsService extends TransactionSupport {
               result.data.eventId,
               result.data.customerEventId || null,
             ),
+            googleCalendarEmployeeEventId: result.data.eventId,
+            googleCalendarCustomerEventId: result.data.customerEventId || null,
           },
         );
-        console.log('[syncAppointmentToGoogleCalendar] Synced successfully');
+        return { synced: true };
       }
+
+      return {
+        synced: false,
+        warningMessage: AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
+      };
     } catch (error) {
       console.error('[syncAppointmentToGoogleCalendar] Error:', error);
-      // throw error;
+      return {
+        synced: false,
+        warningMessage: AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
+      };
     }
   }
 
@@ -467,17 +472,19 @@ export class AppointmentsService extends TransactionSupport {
           : hasCustomerGoogleCalendarEvent(
               previousAppointment.googleCalendarEventId,
             );
-      try {
-        await this.syncAppointmentToGoogleCalendar(
-          appointmentData.toJSON() as Appointment,
-          user,
-          sendGoogleCalendar,
-        );
-      } catch (error) {
-        console.error('[create] Failed to sync with Google Calendar:', error);
-        // Don't fail appointment creation if Google sync fails
-      }
-      return new GenericResponse(appointmentData);
+      const syncResult = await this.syncAppointmentToGoogleCalendar(
+        appointmentData.toJSON() as Appointment,
+        user,
+        sendGoogleCalendar,
+      );
+      const appointmentWithSync = await this.model.get({ id: appointment.id });
+      return syncResult.synced
+        ? new GenericResponse(appointmentWithSync)
+        : new GenericResponse(
+            appointmentWithSync,
+            true,
+            AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
+          );
     } catch (error) {
       throw handleError(error);
     }
@@ -535,10 +542,7 @@ export class AppointmentsService extends TransactionSupport {
       const appointmentData = updatedAppointment.toJSON() as Appointment;
 
       // Invoke Lambda to sync with Google Calendar asynchronously
-      await this.lambdaInvokeService.invokeGoogleCalendarSync(
-        appointmentData,
-        'update',
-      );
+      await this.syncAppointmentToGoogleCalendar(appointmentData, user, true);
 
       return new GenericResponse(appointmentData);
     } catch (error) {
@@ -563,11 +567,6 @@ export class AppointmentsService extends TransactionSupport {
   private validateAppointmentDates(startDate: string, endDate: string): void {
     const start = new Date(startDate);
     const end = new Date(endDate);
-    console.log('start', start);
-    console.log('end', end);
-    console.log('isNaN(start.getTime())', isNaN(start.getTime()));
-    console.log('isNaN(end.getTime())', isNaN(end.getTime()));
-    console.log('start >= end', start >= end);
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       throw new Error('MS042');
     }
@@ -575,7 +574,6 @@ export class AppointmentsService extends TransactionSupport {
     if (start >= end) {
       throw new Error('MS041');
     }
-    console.log('validateAppointmentDates');
   }
 
   private async resolveCustomerName(idCustomer: string): Promise<string> {

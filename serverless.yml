@@ -105,44 +105,6 @@ functions:
     handler: dist/src/lambda.handler
     layers:
       - arn:aws:lambda:us-east-1:754881596744:layer:vyva-appointments:1
-    events:
-      - http:
-          path: /api/appointments
-          method: ANY
-          cors:
-            origin: '*'
-            headers:
-              - Content-Type
-              - Accept
-              - Authorization
-              - X-Requested-With
-              - Application
-              - Origin
-              - Access-Control-Allow-Origin
-              - Access-Control-Allow-Credentials
-              - x-api-bid
-              - x-api-key
-              - api-key
-            allowCredentials: false
-      - http:
-          path: /api/appointments/{proxy+}
-          method: ANY
-          cors:
-            origin: '*'
-            headers:
-              - Content-Type
-              - Accept
-              - Authorization
-              - X-Requested-With
-              - Application
-              - Origin
-              - Access-Control-Allow-Origin
-              - Access-Control-Allow-Credentials
-              - x-api-bid
-              - x-api-key
-              - api-key
-            allowCredentials: false
-
 package:
   excludeDevDependencies: true
   patterns:
