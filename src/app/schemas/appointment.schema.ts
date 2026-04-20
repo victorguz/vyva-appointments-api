@@ -39,6 +39,8 @@ export interface Appointment extends AppointmentKey {
   employeeName?: string;
   notes?: string;
   services?: AppointmentService[]; // Array of services for this appointment
+  idParent?: string; // ID of the parent appointment (for multi-session series)
+  sessionNumber?: number; // 1-based session index within the series
 }
 
 export const AppointmentSchema = new Schema(
@@ -159,6 +161,18 @@ export const AppointmentSchema = new Schema(
           },
         },
       ],
+      required: false,
+    },
+    idParent: {
+      type: String,
+      required: false,
+      index: {
+        type: 'global',
+        name: 'parent-index',
+      },
+    },
+    sessionNumber: {
+      type: Number,
       required: false,
     },
   },

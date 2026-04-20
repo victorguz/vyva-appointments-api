@@ -41,6 +41,18 @@ export class AppointmentServiceDto {
   measure?: number;
 }
 
+export class AdditionalSessionDto {
+  @ApiProperty({ description: 'Session start date and time' })
+  @IsDateString()
+  @IsNotEmpty()
+  startDate: string;
+
+  @ApiProperty({ description: 'Session end date and time' })
+  @IsDateString()
+  @IsNotEmpty()
+  endDate: string;
+}
+
 export class CreatePublicAppointmentDto {
   @ApiProperty({ description: 'Appointment start date and time' })
   @IsDateString()
@@ -209,6 +221,16 @@ export class CreateAppointmentDto {
         : value,
   )
   sendGoogleCalendar?: boolean;
+
+  @ApiProperty({
+    description: 'Additional sessions for multi-session appointments',
+    type: [AdditionalSessionDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AdditionalSessionDto)
+  additionalSessions?: AdditionalSessionDto[];
 }
 export class UpdateAppointmentDto {
   @ApiProperty({ description: 'Appointment start date and time' })
@@ -328,6 +350,11 @@ export class ListAppointmentDto {
   @IsString()
   @IsOptional()
   idOrder?: string;
+
+  @ApiProperty({ description: 'Parent appointment ID filter' })
+  @IsString()
+  @IsOptional()
+  idParent?: string;
 
   @ApiProperty({ description: 'Customer ID filter' })
   @IsString()

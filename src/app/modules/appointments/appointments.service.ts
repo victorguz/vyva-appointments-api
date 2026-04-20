@@ -82,6 +82,32 @@ export class AppointmentsService extends TransactionSupport {
         .using('idBusiness-index')
         .eq(user.idBusiness);
 
+      // Serie de sesiones: devolver padre + hijos
+      if (filters?.idParent) {
+        const children = await businessQuery
+          .where('idParent')
+          .eq(filters.idParent)
+          .exec();
+        const parent = await this.model.get({ id: filters.idParent });
+
+        const series: Appointment[] = [...children];
+        if (parent?.idBusiness === user.idBusiness) {
+          series.push(parent);
+        }
+
+        const unique = Array.from(
+          new Map(series.map((a) => [a.id, a])).values(),
+        );
+        return new GenericResponse(
+          unique.sort((a, b) => {
+            const sessionA = a.sessionNumber ?? Number.MAX_SAFE_INTEGER;
+            const sessionB = b.sessionNumber ?? Number.MAX_SAFE_INTEGER;
+            if (sessionA !== sessionB) return sessionA - sessionB;
+            return a.startDate.getTime() - b.startDate.getTime();
+          }),
+        );
+      }
+
       // Filtros acumulativos sobre la misma query
       if (filters?.idOrder) {
         businessQuery = businessQuery.where('idOrder').eq(filters.idOrder);
@@ -146,114 +172,144 @@ export class AppointmentsService extends TransactionSupport {
     body: CreateAppointmentDto,
     user: User,
   ): Promise<GenericResponse<Appointment>> {
-    let appointmentPayload;
+    const allPayloads: Appointment[] = [];
     try {
-      if (!body.startDate || !body.endDate) {
-        throw new Error('MS014'); // Start and end dates are required
+      const validAdditionalSessions = (body.additionalSessions ?? []).filter(
+        (session) => !!session?.startDate && !!session?.endDate,
+      );
+      const isSeries = validAdditionalSessions.length > 0;
+
+      // Build parent appointment
+      const parentPayload = await this.createAppointmentObject(body, user);
+      if (isSeries) {
+        parentPayload.sessionNumber = 1;
       }
+      allPayloads.push(parentPayload);
 
-      this.validateAppointmentDates(body.startDate, body.endDate);
-
-      const startDateTimestamp = new Date(body.startDate).getTime();
-      const endDateTimestamp = new Date(body.endDate).getTime();
-
-      // Validate that dates are valid and not Infinity
-      if (
-        !isFinite(startDateTimestamp) ||
-        !isFinite(endDateTimestamp) ||
-        isNaN(startDateTimestamp) ||
-        isNaN(endDateTimestamp)
-      ) {
-        throw new Error('MS042'); // Invalid date format
-      }
-
-      // Process services array or create from single service for backwards compatibility
-      let services = body.services;
-      if (!services || services.length === 0) {
-        // Backwards compatibility: create services array from single idService
-        if (body.idService) {
-          services = [
-            {
-              id: body.idService,
-              name: body.serviceName || '', // Will be populated by sales order
-              price: 0,
-              offerPrice: 0,
-              measure: 0,
-            },
-          ];
+      // Build additional sessions if any
+      if (isSeries) {
+        for (let i = 0; i < validAdditionalSessions.length; i++) {
+          const session = validAdditionalSessions[i];
+          const childPayload = await this.createAppointmentObject(
+            { ...body, startDate: session.startDate, endDate: session.endDate },
+            user,
+          );
+          childPayload.idParent = parentPayload.id;
+          childPayload.sessionNumber = i + 2;
+          allPayloads.push(childPayload);
         }
       }
 
-      // Get customer name if not provided but idCustomer exists
-      let customerName = body.customerName;
-      if (!customerName && body.idCustomer) {
-        customerName = await this.resolveCustomerName(body.idCustomer);
-      }
+      // Single transaction for all appointments
+      await this.transaction(
+        allPayloads.map((p) => this.model.transaction.create(p)),
+      );
 
-      // Resolve employeeName from User schema if not provided
-      let employeeName = body.employeeName ?? '';
-      if (!employeeName && body.idEmployee) {
-        employeeName = await this.resolveEmployeeName(body.idEmployee);
-      }
-
-      const appointment: Appointment = {
-        id: uuidv4(),
-        startDate: sanitizeNumericValue(startDateTimestamp) as any,
-        endDate: sanitizeNumericValue(endDateTimestamp) as any,
-        idService:
-          body.idService ||
-          (services && services.length > 0 ? services[0].id : ''),
-        idCustomer: body.idCustomer,
-        idEmployee: body.idEmployee,
-        status: AppointmentStatus.pending,
-        idBusiness: user.idBusiness,
-        createdBy: user.id,
-        googleCalendarId: body.googleCalendarId,
-        googleCalendarEventId: body.googleCalendarEventId,
-        googleCalendarEmployeeEventId: body.googleCalendarEventId,
-        googleCalendarCustomerEventId: undefined,
-        customerName: customerName,
-        serviceName: body.serviceName || body.services?.[0]?.name || '',
-        employeeName: employeeName,
-        notes: body.notes,
-        services: services,
-      };
-
-      // Prepare products for sales order from services array
-      const products = services?.map((service) => ({
-        id: service.id,
-        quantity: 1,
-      })) || [{ id: body.idService, quantity: 1 }];
-
-      appointmentPayload = deleteEmptyProperties({
-        ...appointment,
-      });
-
-      await this.transaction([
-        this.model.transaction.create(appointmentPayload),
-      ]);
-
-      const appointmentData = await this.model.get({ id: appointment.id });
-      const syncResult = await this.syncAppointmentToGoogleCalendar(
-        appointmentData.toJSON() as Appointment,
+      // Sync all to Google Calendar
+      const syncResult = await this.syncAllToGoogleCalendar(
+        allPayloads,
         user,
         body.sendGoogleCalendar ?? false,
       );
 
-      console.log({ syncResult });
-      const appointmentWithSync = await this.model.get({ id: appointment.id });
-
+      const parentWithSync = await this.model.get({ id: parentPayload.id });
       return syncResult.synced
-        ? new GenericResponse(appointmentWithSync)
+        ? new GenericResponse(parentWithSync)
         : new GenericResponse(
-            appointmentWithSync,
+            parentWithSync,
             true,
             AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
           );
     } catch (error) {
-      if (appointmentPayload) await this.model.delete(appointmentPayload);
+      for (const payload of allPayloads) {
+        try {
+          await this.model.delete(payload);
+        } catch (_) {}
+      }
       throw handleError(error);
     }
+  }
+
+  private async createAppointmentObject(
+    body: CreateAppointmentDto,
+    user: User,
+  ): Promise<Appointment> {
+    if (!body.startDate || !body.endDate) {
+      throw new Error('MS014'); // Start and end dates are required
+    }
+
+    this.validateAppointmentDates(body.startDate, body.endDate);
+
+    const startDateTimestamp = new Date(body.startDate).getTime();
+    const endDateTimestamp = new Date(body.endDate).getTime();
+
+    // Validate that dates are valid and not Infinity
+    if (
+      !isFinite(startDateTimestamp) ||
+      !isFinite(endDateTimestamp) ||
+      isNaN(startDateTimestamp) ||
+      isNaN(endDateTimestamp)
+    ) {
+      throw new Error('MS042'); // Invalid date format
+    }
+
+    // Process services array or create from single service for backwards compatibility
+    let services = body.services;
+    if (!services || services.length === 0) {
+      // Backwards compatibility: create services array from single idService
+      if (body.idService) {
+        services = [
+          {
+            id: body.idService,
+            name: body.serviceName || '', // Will be populated by sales order
+            price: 0,
+            offerPrice: 0,
+            measure: 0,
+          },
+        ];
+      }
+    }
+
+    // Get customer name if not provided but idCustomer exists
+    let customerName = body.customerName;
+    if (!customerName && body.idCustomer) {
+      customerName = await this.resolveCustomerName(body.idCustomer);
+    }
+
+    // Resolve employeeName from User schema if not provided
+    let employeeName = body.employeeName ?? '';
+    if (!employeeName && body.idEmployee) {
+      employeeName = await this.resolveEmployeeName(body.idEmployee);
+    }
+
+    const appointment: Appointment = {
+      id: uuidv4(),
+      startDate: sanitizeNumericValue(startDateTimestamp) as any,
+      endDate: sanitizeNumericValue(endDateTimestamp) as any,
+      idService:
+        body.idService ||
+        (services && services.length > 0 ? services[0].id : ''),
+      idCustomer: body.idCustomer,
+      idEmployee: body.idEmployee,
+      status: AppointmentStatus.pending,
+      idBusiness: user.idBusiness,
+      createdBy: user.id,
+      googleCalendarId: body.googleCalendarId,
+      googleCalendarEventId: body.googleCalendarEventId,
+      googleCalendarEmployeeEventId: body.googleCalendarEventId,
+      googleCalendarCustomerEventId: undefined,
+      customerName: customerName,
+      serviceName: body.serviceName || body.services?.[0]?.name || '',
+      employeeName: employeeName,
+      notes: body.notes,
+      services: services,
+    };
+
+    // Prepare products for sales order from services array
+
+    return deleteEmptyProperties({
+      ...appointment,
+    });
   }
 
   async createTimeOutAppointment(
@@ -332,6 +388,29 @@ export class AppointmentsService extends TransactionSupport {
   }
 
   /**
+   * Sync all appointments in a series to Google Calendar.
+   * Failures are non-fatal — returns { synced: false } if any fails.
+   */
+  private async syncAllToGoogleCalendar(
+    payloads: Appointment[],
+    user: User,
+    sendGoogleCalendar: boolean,
+  ): Promise<{ synced: boolean }> {
+    let allSynced = true;
+    for (const payload of payloads) {
+      const appointmentData = await this.model.get({ id: payload.id });
+      if (!appointmentData) continue;
+      const result = await this.syncAppointmentToGoogleCalendar(
+        appointmentData.toJSON() as Appointment,
+        user,
+        sendGoogleCalendar,
+      );
+      if (!result.synced) allSynced = false;
+    }
+    return { synced: allSynced };
+  }
+
+  /**
    * Sync appointment to Google Calendar Vyva calendar
    */
   private async syncAppointmentToGoogleCalendar(
@@ -352,15 +431,16 @@ export class AppointmentsService extends TransactionSupport {
       );
       console.log({ result });
       if (result.data?.eventId) {
+        const customerEventId = result.data.customerEventId || undefined;
         await this.model.update(
           { id: appointment.id },
           {
             googleCalendarEventId: serializeGoogleCalendarEventIds(
               result.data.eventId,
-              result.data.customerEventId || null,
+              customerEventId,
             ),
             googleCalendarEmployeeEventId: result.data.eventId,
-            googleCalendarCustomerEventId: result.data.customerEventId || null,
+            googleCalendarCustomerEventId: customerEventId,
           },
         );
         return { synced: true };
