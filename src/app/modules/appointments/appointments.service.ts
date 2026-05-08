@@ -370,7 +370,7 @@ export class AppointmentsService extends TransactionSupport {
       const syncResult = await this.syncAppointmentToGoogleCalendar(
         appointmentData.toJSON() as Appointment,
         user,
-        body.sendGoogleCalendar ?? false,
+        false, // createTimeOut never sends customer calendar events
       );
       const appointmentWithSync = await this.model.get({ id: appointment.id });
       return syncResult.synced
@@ -419,6 +419,33 @@ export class AppointmentsService extends TransactionSupport {
     sendGoogleCalendar: boolean,
   ): Promise<{ synced: boolean; warningMessage?: string }> {
     try {
+      const isCanceledStatus =
+        appointment.status === AppointmentStatus.canceled ||
+        appointment.status === AppointmentStatus.canceledByCustomer;
+
+      if (isCanceledStatus) {
+        await this.lambdaInvokeService.invokeFunction(
+          'vyva-integrations',
+          'POST',
+          '/api/integrations/google-calendar/events/vyva/delete',
+          {
+            appointmentId: appointment.id,
+          },
+          user,
+        );
+
+        await this.model.update(
+          { id: appointment.id },
+          {
+            googleCalendarEventId: undefined,
+            googleCalendarEmployeeEventId: undefined,
+            googleCalendarCustomerEventId: undefined,
+          },
+        );
+
+        return { synced: true };
+      }
+
       const result = await this.lambdaInvokeService.invokeFunction(
         'vyva-integrations',
         'POST',
@@ -429,12 +456,12 @@ export class AppointmentsService extends TransactionSupport {
         },
         user,
       );
-      console.log({ result });
       if (result.data?.eventId) {
         const customerEventId = result.data.customerEventId || undefined;
         await this.model.update(
           { id: appointment.id },
           {
+            googleCalendarId: result.data.employeeCalendarId,
             googleCalendarEventId: serializeGoogleCalendarEventIds(
               result.data.eventId,
               customerEventId,
@@ -492,7 +519,6 @@ export class AppointmentsService extends TransactionSupport {
         (cleanedUpdateDto as any).notes = updateAppointmentDto.notes ?? '';
       }
       const cleanedDto = cleanedUpdateDto;
-      delete (cleanedDto as any).sendGoogleCalendar;
 
       // Handle date conversions - convert string dates to Date objects for Dynamoose
       if (cleanedDto.startDate) {
@@ -546,12 +572,9 @@ export class AppointmentsService extends TransactionSupport {
       await this.transaction(transactionItems);
 
       const appointmentData = await this.model.get({ id: appointment.id });
-      const sendGoogleCalendar =
-        updateAppointmentDto.sendGoogleCalendar !== undefined
-          ? updateAppointmentDto.sendGoogleCalendar
-          : hasCustomerGoogleCalendarEvent(
-              previousAppointment.googleCalendarEventId,
-            );
+      const sendGoogleCalendar = hasCustomerGoogleCalendarEvent(
+        previousAppointment.googleCalendarEventId,
+      );
       const syncResult = await this.syncAppointmentToGoogleCalendar(
         appointmentData.toJSON() as Appointment,
         user,
@@ -621,8 +644,15 @@ export class AppointmentsService extends TransactionSupport {
 
       const appointmentData = updatedAppointment.toJSON() as Appointment;
 
-      // Invoke Lambda to sync with Google Calendar asynchronously
-      await this.syncAppointmentToGoogleCalendar(appointmentData, user, true);
+      // Only sync to customer calendar if the appointment had a customer event
+      const sendGoogleCalendar = hasCustomerGoogleCalendarEvent(
+        appointmentData.googleCalendarEventId,
+      );
+      await this.syncAppointmentToGoogleCalendar(
+        appointmentData,
+        user,
+        sendGoogleCalendar,
+      );
 
       return new GenericResponse(appointmentData);
     } catch (error) {

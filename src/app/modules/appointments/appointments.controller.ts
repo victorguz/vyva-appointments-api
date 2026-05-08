@@ -211,5 +211,4 @@ export class AppointmentsController {
       user,
     );
   }
-
 }

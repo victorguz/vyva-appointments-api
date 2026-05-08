@@ -172,12 +172,26 @@ export class AppointmentsCustomerService extends TransactionSupport {
 
       // Sync with Google Calendar (fire-and-forget, don't fail if sync fails)
       try {
+        const userContext = {
+          ...user,
+          idBusiness: appointmentData.idBusiness,
+        } as User;
+
         await this.lambdaInvokeService.invokeFunction(
           'vyva-integrations',
           'POST',
-          '/api/integrations/google-calendar/events/vyva',
-          { appointmentId: appointmentData.id, sendGoogleCalendar: true },
-          user,
+          '/api/integrations/google-calendar/events/vyva/delete',
+          { appointmentId: appointmentData.id },
+          userContext,
+        );
+
+        await this.model.update(
+          { id: appointmentData.id },
+          {
+            googleCalendarEventId: undefined,
+            googleCalendarEmployeeEventId: undefined,
+            googleCalendarCustomerEventId: undefined,
+          },
         );
       } catch (syncError) {
         console.error(
