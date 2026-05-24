@@ -63,7 +63,7 @@ export class AppointmentsPublicService extends TransactionSupport {
         idService: body.idService,
         idCustomer: body.idCustomer,
         idEmployee: body.idEmployee,
-        status: AppointmentStatus.pending,
+        status: body.status ?? AppointmentStatus.web,
         idBusiness: body.idBusiness,
         createdBy: undefined as any,
         notes: body.notes,

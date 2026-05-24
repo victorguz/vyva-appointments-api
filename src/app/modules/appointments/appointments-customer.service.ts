@@ -7,12 +7,6 @@ import { GenericResponse } from '../../core/interfaces/generic-response.interfac
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { handleError } from '../../shared/error.functions';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
-import {
-  CreateAppointmentDto,
-  ListAppointmentDto,
-  UpdateAppointmentDto,
-  UpdateAppointmentStatusDto,
-} from './dto/appointments.dto';
 import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { Business, BusinessKey } from 'src/app/schemas/business.schema';
 import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
@@ -58,6 +52,7 @@ export class AppointmentsCustomerService extends TransactionSupport {
       if (customerIds.length === 0) {
         return new GenericResponse([]);
       }
+      console.log({ customerIds });
 
       // 2. Para cada idCustomer, consultar appointments por GSI customer-index
       const allAppointments: Appointment[] = [];
@@ -77,6 +72,7 @@ export class AppointmentsCustomerService extends TransactionSupport {
         (a, b) =>
           new Date(b.startDate).getTime() - new Date(a.startDate).getTime(),
       );
+      console.log({ appointments: appointments.length });
 
       // Use Maps to cache products and businesses by their ids. This avoids redundant fetches.
       const productCache: Map<string, Product | null> = new Map();
@@ -119,6 +115,8 @@ export class AppointmentsCustomerService extends TransactionSupport {
           business,
         });
       }
+      console.log({ appointmentsWithProductAndBusiness });
+      
       return new GenericResponse(appointmentsWithProductAndBusiness as any[]);
     } catch (error) {
       throw handleError(error);

@@ -78,7 +78,7 @@ export class AppointmentsController {
   }
 
   @Post()
-  @UseGuards(AuthGuard, BusinessIdGuard)
+  @UseGuards(AuthGuard)
   @ApiOperation({ summary: 'Create a new appointment' })
   @ApiResponse({
     status: 201,

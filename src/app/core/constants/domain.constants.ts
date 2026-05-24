@@ -59,6 +59,7 @@ export enum SalesOrderStatus {
 
 export enum AppointmentStatus {
   pending = 'pending',
+  web = 'web',
   confirmed = 'confirmed',
   canceled = 'canceled',
   completed = 'completed',
