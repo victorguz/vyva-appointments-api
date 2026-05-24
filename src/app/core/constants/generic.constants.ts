@@ -1,3 +1,4 @@
+import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
 export const maxGenericCharacters: number = 15;
 export const maxItemName: number = 70;
 export const maxParameterName: number = 70;
@@ -22,3 +23,11 @@ export const DATE_FORMAT = {
     monthYearA11yLabel: 'MM[-]YYYY',
   },
 };
+
+
+export const AVAILABLE_APPOINTMENT_STATUSES_TO_GENERATE_TIMESLOTS = [
+  AppointmentStatus.pending,
+  AppointmentStatus.web,
+  AppointmentStatus.confirmed,
+  AppointmentStatus.completed,
+];

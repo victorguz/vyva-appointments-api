@@ -3,7 +3,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { GenericResponse } from '../../../core/interfaces/generic-response.interface';
 import { TimeslotsService } from './timeslots.service';
-import { GetTimeslotsQueryDto, TimeslotResponseDto } from './dto/timeslots.dto';
+import { AvailableTimeSlot, GetTimeslotsQueryDto } from './dto/timeslots.dto';
 
 @ApiTags('Timeslots')
 @Controller('appointments/timeslots')
@@ -20,7 +20,7 @@ export class TimeslotsController {
   async getAvailableTimeslotsPublic(
     @Param('businessId') businessId: string,
     @Query() query: GetTimeslotsQueryDto,
-  ): Promise<GenericResponse<{ [date: string]: TimeslotResponseDto }>> {
+  ): Promise<GenericResponse<{ [date: string]: AvailableTimeSlot[] }>> {
     return this.timeslotsService.getAvailableTimeslots(businessId, query);
   }
 }

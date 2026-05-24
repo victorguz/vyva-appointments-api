@@ -65,25 +65,12 @@ export class BusinessConfigDto {
   splitTime: number; // Minutes
 }
 
-export class OccupationByEmployeeDto {
-  @ApiProperty({ description: 'Employee ID' })
-  idEmployee: string;
-  @ApiProperty({ description: 'Times' })
-  times: number;
-}
-
 export class AvailableTimeSlot {
-  @ApiProperty({ description: 'Employees IDs' })
-  idEmployees: string[];
+  @ApiProperty({ description: 'Least occupied employee available for this slot' })
+  idEmployee: string;
   @ApiProperty({ description: 'Start time' })
   startTime: Date;
   @ApiProperty({ description: 'End time' })
   endTime: Date;
 }
 
-export class TimeslotResponseDto {
-  @ApiProperty({ description: 'Least occupied employee for this day' })
-  occupationByEmployee: OccupationByEmployeeDto;
-  @ApiProperty({ description: 'Available timeslots' })
-  availableTimeslots: AvailableTimeSlot[];
-}
