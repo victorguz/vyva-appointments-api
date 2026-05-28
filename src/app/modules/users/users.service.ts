@@ -3,7 +3,6 @@ import { InjectModel, Model } from 'nestjs-dynamoose';
 
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { User, UserKey } from '../../schemas/user.schema';
-import { handleError } from '../../shared/error.functions';
 import { UserRole } from 'src/app/core/constants/domain.constants';
 
 @Injectable()
@@ -26,7 +25,7 @@ export class UsersService {
       delete userData.password;
       return new GenericResponse(userData);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -42,7 +41,7 @@ export class UsersService {
         .exec();
       return new GenericResponse(users);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 }

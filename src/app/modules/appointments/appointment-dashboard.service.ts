@@ -5,7 +5,6 @@ import { User } from 'src/app/schemas/user.schema';
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { AppointmentStatus } from '../../core/constants/domain.constants';
-import { handleError } from '../../shared/error.functions';
 import * as moment from 'moment';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { DateRangeReportDto } from './dto/appointments.dto';
@@ -33,7 +32,7 @@ export class AppointmentDashboardService extends TransactionSupport {
       const uniqueCustomers = new Set(appointments.map((appointment) => appointment.idCustomer));
       return new GenericResponse(uniqueCustomers.size);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -77,7 +76,7 @@ export class AppointmentDashboardService extends TransactionSupport {
 
       return new GenericResponse(statusCounts);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 }

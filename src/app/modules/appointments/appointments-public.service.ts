@@ -6,7 +6,6 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
-import { handleError } from '../../shared/error.functions';
 import {
   deleteEmptyProperties,
   sanitizeNumericValue,
@@ -96,7 +95,7 @@ export class AppointmentsPublicService extends TransactionSupport {
 
       return new GenericResponse(appointmentData);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 

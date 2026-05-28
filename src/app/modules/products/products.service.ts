@@ -4,8 +4,6 @@ import { User } from 'src/app/schemas/user.schema';
 
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Product, ProductKey } from '../../schemas/product.schema';
-import { handleError } from '../../shared/error.functions';
-
 @Injectable()
 export class ProductsService {
   constructor(
@@ -27,7 +25,7 @@ export class ProductsService {
       }
       return new GenericResponse(product[0].toJSON() as Product);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 }

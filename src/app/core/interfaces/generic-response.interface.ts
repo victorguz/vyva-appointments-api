@@ -1,5 +1,4 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ERROR_MESSAGES } from '../constants/error.constants';
 import { HttpStatus } from '@nestjs/common';
 
 export interface IGenericResponse<T> {
@@ -12,7 +11,7 @@ export class GenericResponse<T> implements IGenericResponse<T> {
   @ApiProperty()
   success: boolean = true;
   @ApiProperty()
-  message: string = ERROR_MESSAGES.MS003;
+  message: string = 'Consulta realizada con éxito.';
   @ApiProperty()
   data?: T;
   @ApiProperty()
@@ -25,7 +24,7 @@ export class GenericResponse<T> implements IGenericResponse<T> {
   constructor(
     data: T,
     success: boolean = true,
-    message: string = ERROR_MESSAGES.MS003,
+    message: string = 'Consulta realizada con éxito.',
     handledError?: boolean,
     code?: string,
     status?: HttpStatus,

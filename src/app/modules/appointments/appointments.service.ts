@@ -10,7 +10,6 @@ import {
   AppointmentKey,
   AppointmentService,
 } from '../../schemas/appointment.schema';
-import { handleError } from '../../shared/error.functions';
 import {
   deleteEmptyProperties,
   sanitizeNumericValue,
@@ -144,7 +143,7 @@ export class AppointmentsService extends TransactionSupport {
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
       );
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -164,7 +163,7 @@ export class AppointmentsService extends TransactionSupport {
 
       return new GenericResponse(customerQuery);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -226,7 +225,7 @@ export class AppointmentsService extends TransactionSupport {
           await this.model.delete(payload);
         } catch (_) {}
       }
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -383,7 +382,7 @@ export class AppointmentsService extends TransactionSupport {
     } catch (error) {
       if (appointmentPayload) await this.model.delete(appointmentPayload);
 
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -589,7 +588,7 @@ export class AppointmentsService extends TransactionSupport {
             AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
           );
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -656,7 +655,7 @@ export class AppointmentsService extends TransactionSupport {
 
       return new GenericResponse(appointmentData);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -670,7 +669,7 @@ export class AppointmentsService extends TransactionSupport {
       await this.model.delete({ id });
       return new GenericResponse(true);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 

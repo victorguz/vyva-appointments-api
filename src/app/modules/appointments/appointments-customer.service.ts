@@ -5,7 +5,6 @@ import { User } from 'src/app/schemas/user.schema';
 
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
-import { handleError } from '../../shared/error.functions';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { Business, BusinessKey } from 'src/app/schemas/business.schema';
@@ -119,7 +118,7 @@ export class AppointmentsCustomerService extends TransactionSupport {
       
       return new GenericResponse(appointmentsWithProductAndBusiness as any[]);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 
@@ -200,7 +199,7 @@ export class AppointmentsCustomerService extends TransactionSupport {
 
       return new GenericResponse(appointmentData);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 }

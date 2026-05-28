@@ -12,7 +12,6 @@ import {
 import { Domain, DomainKey } from '../../../schemas/domain.schema';
 import { Product, ProductKey } from '../../../schemas/product.schema';
 import { User, UserKey } from '../../../schemas/user.schema';
-import { handleError } from '../../../shared/error.functions';
 import { UsersService } from '../../users/users.service';
 import { AvailableTimeSlot, GetTimeslotsQueryDto } from './dto/timeslots.dto';
 import { isEmpty } from 'class-validator';
@@ -147,7 +146,7 @@ export class TimeslotsService {
 
       return new GenericResponse(availableSlotsByDate);
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 

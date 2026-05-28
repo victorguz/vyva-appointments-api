@@ -1,6 +1,5 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Request } from 'express';
-import { handleError } from 'src/app/shared/error.functions';
 import { InjectModel } from 'nestjs-dynamoose';
 import { Model } from 'nestjs-dynamoose';
 import { User, UserKey } from 'src/app/schemas/user.schema';
@@ -26,7 +25,7 @@ export class AuthGuard implements CanActivate {
     const edgeUser = this.extractEdgeUserFromHeader(request);
 
     if (!edgeUser || !edgeUser.sub) {
-      throw handleError('MS019');
+      throw new Error('MS019');
     }
 
     try {
@@ -49,7 +48,7 @@ export class AuthGuard implements CanActivate {
       (request as any)['user'] = userData;
       return true;
     } catch (error) {
-      throw handleError(error);
+      throw error;
     }
   }
 
