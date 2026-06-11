@@ -3,7 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { DynamooseModule } from 'nestjs-dynamoose';
 import { configModuleOptions } from './core/config/environment.config';
 import { dynamooseConfig } from './core/config/dynamoose.config';
-import { AppointmentsModule } from './modules/appointments/appointments.module';
+import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -14,7 +14,7 @@ import { AppointmentsModule } from './modules/appointments/appointments.module';
         dynamooseConfig(configService),
       inject: [ConfigService],
     }),
-    AppointmentsModule,
+    WhatsAppModule,
   ],
 })
 export class AppModule {}

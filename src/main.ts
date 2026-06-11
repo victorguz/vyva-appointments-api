@@ -12,7 +12,6 @@ import {
 } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Express, json, urlencoded } from 'express';
-import * as requestIp from 'request-ip';
 
 import { AppModule } from './app/app.module';
 
@@ -32,7 +31,16 @@ async function bootstrap(
         );
 
   app.setGlobalPrefix('api');
-  app.use(json({ limit: '10mb' }));
+  app.use(
+    json({
+      limit: '10mb',
+      verify: (req: any, _res, buf) => {
+        if (req.url?.includes('/whatsapp/webhook')) {
+          req.rawBody = buf;
+        }
+      },
+    }),
+  );
   app.use(urlencoded({ extended: true, limit: '10mb' }));
 
   // Enable DTO validations
@@ -58,8 +66,6 @@ async function bootstrap(
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
-
-  app.use(requestIp.mw());
 
   // Setting app port
   if (port !== undefined) {
