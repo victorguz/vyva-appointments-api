@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { WhatsAppIntegrationData } from '../../schemas/integration.schema';
+import {
+  isPlaceholderPhoneNumberId,
+  isPlaceholderSecret,
+} from '../../shared/whatsapp-integration.util';
 import { IntegrationsCredentialsService } from './integrations-credentials.service';
 
 /** Meta Graph API version used for outbound messages (Cloud API). */
@@ -157,6 +161,32 @@ export class WhatsAppMetaService {
     }
 
     return { metaMessageId };
+  }
+
+  /** Marks an inbound customer message as read in WhatsApp (blue ticks for the customer). */
+  async markMessageAsRead(
+    credentials: WhatsAppIntegrationData,
+    metaMessageId: string,
+  ): Promise<void> {
+    const url = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${credentials.phoneNumberId}/messages`;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${credentials.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: metaMessageId,
+      }),
+    });
+
+    const json = (await res.json()) as { error?: { message: string } };
+    if (!res.ok) {
+      throw new Error(json.error?.message || 'WhatsApp mark-as-read failed');
+    }
   }
 
   /**
@@ -488,6 +518,10 @@ export class WhatsAppMetaService {
 
     if (!phoneNumberIdConfigured) {
       issues.push('Falta el identificador del número de teléfono.');
+    } else if (isPlaceholderPhoneNumberId(phoneNumberIdConfigured)) {
+      issues.push(
+        'El identificador del número está ofuscado o incompleto. Vuelve a ingresar el Phone Number ID completo de Meta.',
+      );
     } else if (/[^0-9]/.test(phoneNumberIdConfigured)) {
       issues.push(
         'El identificador del número parece incorrecto: contiene caracteres no numéricos. Debe ser el Phone Number ID de Meta (solo dígitos), no el número de teléfono (+57…).',
@@ -496,10 +530,18 @@ export class WhatsAppMetaService {
 
     if (!credentials.accessToken?.trim()) {
       issues.push('Falta el token de acceso.');
+    } else if (isPlaceholderSecret(credentials.accessToken)) {
+      issues.push(
+        'El token de acceso está ofuscado. Vuelve a ingresar el token permanente del System User.',
+      );
     }
 
     if (!credentials.appSecret?.trim()) {
       issues.push('Falta la clave secreta de la app.');
+    } else if (isPlaceholderSecret(credentials.appSecret)) {
+      issues.push(
+        'La clave secreta de la app está ofuscada. Vuelve a ingresar el App Secret de Meta.',
+      );
     }
 
     let debug: MetaDebugTokenData = {};

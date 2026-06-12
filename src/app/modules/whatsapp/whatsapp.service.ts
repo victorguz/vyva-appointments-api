@@ -38,6 +38,7 @@ import {
   getServiceWindowState,
   withServiceWindow,
 } from '../../shared/whatsapp-window';
+import { extractWhatsAppMessageContent } from '../../shared/whatsapp-message-content.util';
 import { IntegrationsCredentialsService } from './integrations-credentials.service';
 import { WhatsAppMetaService } from './whatsapp-meta.service';
 
@@ -179,6 +180,7 @@ export class WhatsAppService {
         {
           metaMessageId,
           status: 'sent' as WhatsAppMessageStatus,
+          sentAt: Date.now(),
         },
       );
 
@@ -246,11 +248,12 @@ export class WhatsAppService {
     token: string,
     challenge: string,
   ): Promise<string | null> {
-    if (mode !== 'subscribe' || !token) {
+    if (mode !== 'subscribe' || !token?.trim()) {
       return null;
     }
-    const valid =
-      await this.credentialsService.isWebhookVerifyTokenValid(token);
+    const valid = await this.credentialsService.isWebhookVerifyTokenValid(
+      token.trim(),
+    );
     if (!valid) {
       return null;
     }
@@ -284,7 +287,7 @@ export class WhatsAppService {
     );
 
     const timestamp = Number(msg.timestamp) * 1000 || Date.now();
-    const { type, body } = this.extractMessageContent(msg);
+    const content = extractWhatsAppMessageContent(msg);
 
     const record: WhatsAppMessage = {
       id: uuidv4(),
@@ -292,27 +295,92 @@ export class WhatsAppService {
       idBusiness,
       idCustomer: conversation.idCustomer,
       metaMessageId,
+      replyToMetaMessageId: content.replyToMetaMessageId,
       direction: 'inbound',
       waPhone,
-      type,
-      body,
-      payload: JSON.stringify({ message: msg, value }),
+      type: content.type,
+      body: content.body,
+      payload: JSON.stringify({
+        message: msg,
+        value,
+        media: content.media,
+      }),
       status: 'delivered',
+      deliveredAt: timestamp,
       timestamp,
     };
 
     await this.messageModel.create(record);
     await this.touchConversation(
       conversation.id,
-      body || `[${type}]`,
+      content.body || `[${content.type}]`,
       timestamp,
       { inbound: true },
     );
   }
 
+  async markConversationAsRead(
+    idBusiness: string,
+    idConversation: string,
+  ): Promise<GenericResponse<{ marked: number }>> {
+    const conversation = await this.conversationModel.get({
+      id: idConversation,
+    });
+    if (!conversation) {
+      throw new Error('MS007');
+    }
+    const conv = conversation.toJSON() as WhatsAppConversation;
+    if (conv.idBusiness !== idBusiness) {
+      throw new Error('MS007');
+    }
+
+    const credentials =
+      await this.credentialsService.getByBusinessId(idBusiness);
+    if (!this.credentialsService.isConfigured(credentials)) {
+      throw new Error('MS042');
+    }
+
+    const rows = await this.messageModel
+      .query('idConversation')
+      .eq(idConversation)
+      .using('idConversation-timestamp-index')
+      .exec();
+
+    const unread = rows
+      .map((r) => r.toJSON() as WhatsAppMessage)
+      .filter(
+        (msg) =>
+          msg.direction === 'inbound' &&
+          msg.metaMessageId &&
+          !msg.readByBusinessAt,
+      );
+
+    let marked = 0;
+    const now = Date.now();
+    for (const msg of unread) {
+      try {
+        await this.metaService.markMessageAsRead(
+          credentials!,
+          msg.metaMessageId!,
+        );
+        await this.messageModel.update(
+          { id: msg.id },
+          { readByBusinessAt: now },
+        );
+        marked++;
+      } catch (err) {
+        this.logger.warn(
+          `Could not mark message ${msg.id} as read: ${(err as Error)?.message ?? err}`,
+        );
+      }
+    }
+
+    return new GenericResponse({ marked });
+  }
+
   private async patchMessageStatus(status: Record<string, any>): Promise<void> {
     const metaMessageId = status.id as string;
-    const newStatus = status.status as WhatsAppMessageStatus;
+    const newStatus = status.status as string;
     if (!metaMessageId || !newStatus) {
       return;
     }
@@ -323,11 +391,38 @@ export class WhatsAppService {
     }
 
     const mapped = this.mapMetaStatus(newStatus);
-    if (mapped === existing.status) {
+    const statusTimestamp = status.timestamp
+      ? Number(status.timestamp) * 1000
+      : Date.now();
+    const update: Partial<WhatsAppMessage> = { status: mapped };
+
+    if (mapped === 'sent') {
+      update.sentAt = statusTimestamp;
+    }
+    if (mapped === 'delivered') {
+      update.deliveredAt = statusTimestamp;
+    }
+    if (mapped === 'read') {
+      update.readAt = statusTimestamp;
+      if (!existing.deliveredAt) {
+        update.deliveredAt = statusTimestamp;
+      }
+    }
+    if (mapped === 'failed' && Array.isArray(status.errors)) {
+      update.statusErrors = JSON.stringify(status.errors);
+    }
+
+    if (
+      mapped === existing.status &&
+      !update.statusErrors &&
+      !(mapped === 'read' && !existing.readAt) &&
+      !(mapped === 'delivered' && !existing.deliveredAt) &&
+      !(mapped === 'sent' && !existing.sentAt)
+    ) {
       return;
     }
 
-    await this.messageModel.update({ id: existing.id }, { status: mapped });
+    await this.messageModel.update({ id: existing.id }, update);
   }
 
   private mapMetaStatus(status: string): WhatsAppMessageStatus {
@@ -343,17 +438,6 @@ export class WhatsAppService {
       default:
         return 'sent';
     }
-  }
-
-  private extractMessageContent(msg: Record<string, any>): {
-    type: string;
-    body?: string;
-  } {
-    const type = (msg.type as string) || 'text';
-    if (type === 'text' && msg.text?.body) {
-      return { type, body: msg.text.body as string };
-    }
-    return { type, body: undefined };
   }
 
   private async findByMetaMessageId(
@@ -595,6 +679,7 @@ export class WhatsAppService {
         phoneNumberId: result.phoneNumberId,
         accessToken: result.accessToken,
         appSecret: process.env.META_APP_SECRET?.trim() ?? '',
+        useCredentials: false,
       });
 
       return new GenericResponse({
@@ -702,6 +787,7 @@ export class WhatsAppService {
         {
           metaMessageId,
           status: 'sent' as WhatsAppMessageStatus,
+          sentAt: Date.now(),
         },
       );
 

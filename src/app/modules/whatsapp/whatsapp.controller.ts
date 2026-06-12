@@ -2,14 +2,15 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
+  Logger,
   Param,
   Post,
   Query,
   Req,
   Res,
   UseGuards,
-  HttpCode,
-  HttpStatus,
   RawBodyRequest,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -43,6 +44,8 @@ import { User } from '../../schemas/user.schema';
 @ApiTags('WhatsApp')
 @Controller('whatsapp')
 export class WhatsAppController {
+  private readonly logger = new Logger(WhatsAppController.name);
+
   constructor(
     private readonly whatsAppService: WhatsAppService,
     private readonly metaService: WhatsAppMetaService,
@@ -51,22 +54,37 @@ export class WhatsAppController {
 
   @Get('webhook')
   @ApiOperation({ summary: 'Meta webhook verification' })
-  async verifyWebhook(
-    @Query('hub.mode') mode: string,
-    @Query('hub.verify_token') token: string,
-    @Query('hub.challenge') challenge: string,
-    @Res() res: Response,
-  ): Promise<void> {
-    const result = await this.whatsAppService.verifyWebhookToken(
-      mode,
-      token,
-      challenge,
+  async verifyWebhook(@Req() req: Request, @Res() res: Response): Promise<void> {
+    const mode = readWebhookQueryParam(req.query, 'hub.mode', 'hub_mode');
+    const token = readWebhookQueryParam(
+      req.query,
+      'hub.verify_token',
+      'hub_verify_token',
     );
-    if (result === null) {
-      res.status(HttpStatus.FORBIDDEN).send('Forbidden');
-      return;
+    const challenge = readWebhookQueryParam(
+      req.query,
+      'hub.challenge',
+      'hub_challenge',
+    );
+
+    try {
+      const result = await this.whatsAppService.verifyWebhookToken(
+        mode,
+        token,
+        challenge,
+      );
+      if (result === null) {
+        res.status(HttpStatus.FORBIDDEN).send('Forbidden');
+        return;
+      }
+      res.status(HttpStatus.OK).send(result);
+    } catch (err) {
+      this.logger.error(
+        `Webhook verification failed: ${(err as Error)?.message ?? err}`,
+        (err as Error)?.stack,
+      );
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).send('Internal Server Error');
     }
-    res.status(HttpStatus.OK).send(result);
   }
 
   @Post('webhook')
@@ -109,6 +127,24 @@ export class WhatsAppController {
   ): Promise<GenericResponse<WhatsAppMessagesPageDto>> {
     const idBusiness = (req as any)['idBusiness'] as string;
     return this.whatsAppService.listMessages(idBusiness, idConversation, query);
+  }
+
+  @Post('conversations/:idConversation/read')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Mark inbound messages as read in Meta when the agent opens the conversation',
+  })
+  markConversationRead(
+    @Param('idConversation') idConversation: string,
+    @Req() req: Request,
+  ): Promise<GenericResponse<{ marked: number }>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.markConversationAsRead(
+      idBusiness,
+      idConversation,
+    );
   }
 
   @Post('messages')
@@ -242,4 +278,32 @@ export class WhatsAppController {
     const idBusiness = (req as any)['idBusiness'] as string;
     return this.whatsAppService.verifyAndRegisterPhone(idBusiness, dto.code);
   }
+}
+
+function readWebhookQueryParam(
+  query: Request['query'],
+  dottedKey: string,
+  underscoredKey: string,
+): string {
+  for (const key of [dottedKey, underscoredKey]) {
+    const raw = query[key];
+    if (typeof raw === 'string' && raw.trim()) {
+      return raw.trim();
+    }
+    if (Array.isArray(raw) && typeof raw[0] === 'string' && raw[0].trim()) {
+      return raw[0].trim();
+    }
+  }
+
+  const nested = query[dottedKey.split('.')[0]];
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    const nestedValue = (nested as Record<string, unknown>)[
+      dottedKey.split('.')[1]
+    ];
+    if (typeof nestedValue === 'string' && nestedValue.trim()) {
+      return nestedValue.trim();
+    }
+  }
+
+  return '';
 }

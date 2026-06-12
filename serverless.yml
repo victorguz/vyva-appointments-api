@@ -18,6 +18,7 @@ provider:
     REGION: ${ssm:/vyva/${self:provider.stage}/VYVA_REGION}
     JWT_SECRET: ${ssm:/vyva/${self:provider.stage}/VYVA_JWT_SECRET}
     SECRET_KEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SECRET_KEY}
+    VYVAPOS_ID_BUSINESS: ${ssm:/vyva/${self:provider.stage}/VYVAPOS_ID_BUSINESS, ''}
     META_APP_ID: ${ssm:/vyva/${self:provider.stage}/META_APP_ID}
     META_APP_SECRET: ${ssm:/vyva/${self:provider.stage}/META_APP_SECRET}
     META_OAUTH_REDIRECT_URI: ${ssm:/vyva/${self:provider.stage}/META_OAUTH_REDIRECT_URI}
@@ -42,10 +43,11 @@ provider:
             - dynamodb:UpdateItem
             - dynamodb:DeleteItem
           Resource:
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-messages
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-messages/*
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-conversations
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-conversations/*
+            # Conversations/messages always live in production tables
+            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-messages
+            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-messages/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-conversations
+            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-conversations/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-integrations
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-integrations/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users
@@ -57,8 +59,8 @@ provider:
             - dynamodb:DescribeTable
             - dynamodb:ListTables
           Resource:
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-*
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-*/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-*/*
         - Effect: Allow
           Action:
             - logs:CreateLogGroup
@@ -69,7 +71,9 @@ provider:
 
 functions:
   api:
-    handler: dist/src/lambda.handler
+    handler: dist/lambda.handler
+    layers:
+      - arn:aws:lambda:us-east-1:754881596744:layer:vyva-appointments:1
 
 package:
   excludeDevDependencies: true

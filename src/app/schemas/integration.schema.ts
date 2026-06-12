@@ -8,6 +8,8 @@ export interface WhatsAppIntegrationData {
   phoneNumberId: string;
   accessToken: string;
   appSecret: string;
+  phoneRegistered?: boolean;
+  useCredentials?: boolean;
 }
 
 export interface IntegrationKey {

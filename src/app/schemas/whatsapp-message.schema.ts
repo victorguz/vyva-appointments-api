@@ -18,12 +18,21 @@ export interface WhatsAppMessage extends WhatsAppMessageKey {
   idCustomer?: string;
   metaMessageId?: string;
   clientMessageId?: string;
+  replyToMetaMessageId?: string;
   direction: WhatsAppMessageDirection;
   waPhone: string;
   type: string;
   body?: string;
   payload?: string;
   status: WhatsAppMessageStatus;
+  /** Meta webhook status timestamps (ms). */
+  sentAt?: number;
+  deliveredAt?: number;
+  readAt?: number;
+  /** JSON array from Meta when status is failed. */
+  statusErrors?: string;
+  /** When the business marked an inbound message read in Meta (ms). */
+  readByBusinessAt?: number;
   timestamp: number;
   createdAt?: Date;
   updatedAt?: Date;
@@ -88,6 +97,30 @@ export const WhatsAppMessageSchema = new Schema(
     },
     payload: {
       type: String,
+      required: false,
+    },
+    replyToMetaMessageId: {
+      type: String,
+      required: false,
+    },
+    sentAt: {
+      type: Number,
+      required: false,
+    },
+    deliveredAt: {
+      type: Number,
+      required: false,
+    },
+    readAt: {
+      type: Number,
+      required: false,
+    },
+    statusErrors: {
+      type: String,
+      required: false,
+    },
+    readByBusinessAt: {
+      type: Number,
       required: false,
     },
     status: {

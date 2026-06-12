@@ -46,17 +46,37 @@ export class EnvironmentVariables {
   @IsString()
   SECRET_KEY: string;
 
+  @IsOptional()
   @IsString()
-  ACCESS_KEY_ID: string;
+  ACCESS_KEY_ID?: string;
 
+  @IsOptional()
   @IsString()
-  SECRET_ACCESS_KEY: string;
+  SECRET_ACCESS_KEY?: string;
 
+  @IsOptional()
   @IsString()
-  REGION: string;
+  REGION?: string;
 
+  @IsOptional()
   @IsString()
-  VYVAPOS_ID_BUSINESS: string;
+  VYVAPOS_ID_BUSINESS?: string;
+
+  @IsOptional()
+  @IsString()
+  META_APP_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  META_APP_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  META_OAUTH_REDIRECT_URI?: string;
+
+  @IsOptional()
+  @IsString()
+  FRONTEND_URL?: string;
 }
 
 const validationSchema = Joi.object({
@@ -65,10 +85,14 @@ const validationSchema = Joi.object({
   ERROR_LOGS: Joi.boolean().default(false),
   JWT_SECRET: Joi.string().required(),
   SECRET_KEY: Joi.string().required(),
-  VYVAPOS_ID_BUSINESS: Joi.string().required(),
+  VYVAPOS_ID_BUSINESS: Joi.string().optional().allow(''),
   ACCESS_KEY_ID: Joi.string().optional(),
   SECRET_ACCESS_KEY: Joi.string().optional(),
   REGION: Joi.string().optional(),
+  META_APP_ID: Joi.string().optional().allow(''),
+  META_APP_SECRET: Joi.string().optional().allow(''),
+  META_OAUTH_REDIRECT_URI: Joi.string().optional().allow(''),
+  FRONTEND_URL: Joi.string().optional().allow(''),
 });
 
 function validate(config: Record<string, unknown>) {
