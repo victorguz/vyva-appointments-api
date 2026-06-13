@@ -20,8 +20,6 @@ import { AuthGuard } from '../../core/auth/guards/auth.guard';
 import { AppointmentsService } from './appointments.service';
 import {
   CreateAppointmentDto,
-  CustomerAppointmentFiltersDto,
-  DateRangeReportDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
@@ -29,7 +27,6 @@ import {
 import { BusinessIdGuard } from '../../core/auth/guards/businessId.guard';
 import { AppointmentsCustomerService } from './appointments-customer.service';
 import { AppointmentsPublicService } from './appointments-public.service';
-import { AppointmentDashboardService } from './appointment-dashboard.service';
 
 @ApiTags('Appointments')
 @Controller('appointments')
@@ -38,7 +35,6 @@ export class AppointmentsController {
     private readonly appointmentsService: AppointmentsService,
     private readonly appointmentsCustomerService: AppointmentsCustomerService,
     private readonly appointmentsPublicService: AppointmentsPublicService,
-    private readonly appointmentDashboardService: AppointmentDashboardService,
   ) {}
 
   @Post('public')
@@ -175,40 +171,5 @@ export class AppointmentsController {
     @CurrentUser() user: User,
   ): Promise<GenericResponse<Appointment>> {
     return this.appointmentsCustomerService.cancelCustomerAppointment(id, user);
-  }
-
-  @Get('scheduled-customers')
-  @UseGuards(AuthGuard, BusinessIdGuard)
-  @ApiOperation({ summary: 'Get scheduled customers' })
-  @ApiResponse({
-    status: 200,
-    description: 'Return scheduled customers.',
-    type: GenericResponse<number>,
-  })
-  async scheduledCustomers(
-    @CurrentUser() user: User,
-  ): Promise<GenericResponse<number>> {
-    return this.appointmentDashboardService.scheduledCustomers(user);
-  }
-
-  @Post('by-status')
-  @UseGuards(AuthGuard, BusinessIdGuard)
-  @ApiOperation({
-    summary: 'Get appointments count by status for a date range',
-  })
-  @ApiResponse({
-    status: 200,
-    description:
-      'Return appointments count by status for the specified date range.',
-    type: GenericResponse<{ [status: string]: number }>,
-  })
-  async appointmentsByStatus(
-    @Body() dateRangeDto: DateRangeReportDto,
-    @CurrentUser() user: User,
-  ): Promise<GenericResponse<{ [status: string]: number }>> {
-    return this.appointmentDashboardService.appointmentsByStatus(
-      dateRangeDto,
-      user,
-    );
   }
 }

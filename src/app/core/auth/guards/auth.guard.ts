@@ -4,14 +4,7 @@ import { InjectModel } from 'nestjs-dynamoose';
 import { Model } from 'nestjs-dynamoose';
 import { User, UserKey } from 'src/app/schemas/user.schema';
 import { UserRole } from 'src/app/core/constants/domain.constants';
-
-interface EdgeUserContext {
-  sub: string;
-  idBusiness?: string;
-  role?: string;
-  email?: string;
-  authType?: 'jwt' | 'apiKey';
-}
+import { extractEdgeUserContext } from '../utils/edge-user-context.util';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -22,7 +15,7 @@ export class AuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const edgeUser = this.extractEdgeUserFromHeader(request);
+    const edgeUser = extractEdgeUserContext(request);
 
     if (!edgeUser || !edgeUser.sub) {
       throw new Error('MS019');
@@ -49,32 +42,6 @@ export class AuthGuard implements CanActivate {
       return true;
     } catch (error) {
       throw error;
-    }
-  }
-
-  private extractEdgeUserFromHeader(
-    request: Request,
-  ): EdgeUserContext | undefined {
-    const rawHeader = request.headers['x-vyva-user'];
-    const rawValue =
-      typeof rawHeader === 'string'
-        ? rawHeader
-        : Array.isArray(rawHeader)
-          ? rawHeader[0]
-          : undefined;
-
-    if (!rawValue) {
-      return undefined;
-    }
-
-    try {
-      const parsed = JSON.parse(rawValue) as EdgeUserContext;
-      if (!parsed || typeof parsed !== 'object') {
-        return undefined;
-      }
-      return parsed;
-    } catch {
-      return undefined;
     }
   }
 }

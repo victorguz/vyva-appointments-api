@@ -1,6 +1,10 @@
 service: vyva-appointments
 frameworkVersion: '3'
 
+custom:
+  sharedHttpApiId: ${ssm:/vyva/${self:provider.stage}/HTTP_API_ID}
+  sharedAuthorizerId: ${ssm:/vyva/${self:provider.stage}/HTTP_API_AUTHORIZER_ID}
+
 provider:
   name: aws
   runtime: nodejs20.x
@@ -9,8 +13,14 @@ provider:
   memorySize: 2048
   timeout: 30
 
+  httpApi:
+    id: ${self:custom.sharedHttpApiId}
+
   environment:
     NODE_ENV: ${self:provider.stage}
+    CORS_ALLOWED_ORIGINS: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_ORIGINS}
+    CORS_ALLOWED_METHODS: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_METHODS}
+    CORS_ALLOWED_HEADERS: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_HEADERS}
     # Parámetros compartidos desde SSM
     ACCESS_KEY_ID: ${ssm:/vyva/${self:provider.stage}/VYVA_ACCESS_KEY_ID}
     SECRET_ACCESS_KEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SECRET_ACCESS_KEY}
@@ -105,6 +115,31 @@ functions:
     handler: dist/src/lambda.handler
     layers:
       - arn:aws:lambda:us-east-1:754881596744:layer:vyva-appointments:1
+    events:
+      - httpApi:
+          path: /api/appointments/public
+          method: ANY
+      - httpApi:
+          path: /api/appointments/public/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/appointments
+          method: OPTIONS
+      - httpApi:
+          path: /api/appointments/{proxy+}
+          method: OPTIONS
+      - httpApi:
+          path: /api/appointments
+          method: ANY
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/appointments/{proxy+}
+          method: ANY
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
 package:
   excludeDevDependencies: true
   patterns:

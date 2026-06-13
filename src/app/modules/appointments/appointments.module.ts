@@ -15,7 +15,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { JWT_EXPIRATION } from 'src/app/core/config/environment.config';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
-import { AppointmentDashboardService } from './appointment-dashboard.service';
 import { CustomerSchema } from 'src/app/schemas/customer.schema';
 import { DomainSchema } from 'src/app/schemas/domain.schema';
 import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
@@ -98,7 +97,6 @@ import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
     AppointmentsCustomerService,
     AppointmentsPublicService,
     LambdaInvokeService,
-    AppointmentDashboardService,
   ],
   exports: [AppointmentsService],
 })
