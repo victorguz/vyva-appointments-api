@@ -1,6 +1,10 @@
 service: vyva-whatsapp
 frameworkVersion: '3'
 
+custom:
+  sharedHttpApiId: ${ssm:/vyva/${self:provider.stage}/HTTP_API_ID}
+  sharedAuthorizerId: ${ssm:/vyva/${self:provider.stage}/HTTP_API_AUTHORIZER_ID}
+
 provider:
   name: aws
   runtime: nodejs20.x
@@ -8,11 +12,15 @@ provider:
   region: us-east-1
   memorySize: 2048
   timeout: 30
-  apiGateway:
-    shouldStartNameWithService: true
+
+  httpApi:
+    id: ${self:custom.sharedHttpApiId}
 
   environment:
     NODE_ENV: ${self:provider.stage}
+    CORS_ALLOWED_ORIGINS: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_ORIGINS}
+    CORS_ALLOWED_METHODS: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_METHODS}
+    CORS_ALLOWED_HEADERS: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_HEADERS}
     ACCESS_KEY_ID: ${ssm:/vyva/${self:provider.stage}/VYVA_ACCESS_KEY_ID}
     SECRET_ACCESS_KEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SECRET_ACCESS_KEY}
     REGION: ${ssm:/vyva/${self:provider.stage}/VYVA_REGION}
@@ -74,6 +82,31 @@ functions:
     handler: dist/lambda.handler
     layers:
       - arn:aws:lambda:us-east-1:754881596744:layer:vyva-appointments:1
+    events:
+      - httpApi:
+          path: /api/whatsapp/webhook
+          method: GET
+      - httpApi:
+          path: /api/whatsapp/webhook
+          method: POST
+      - httpApi:
+          path: /api/whatsapp
+          method: OPTIONS
+      - httpApi:
+          path: /api/whatsapp/{proxy+}
+          method: OPTIONS
+      - httpApi:
+          path: /api/whatsapp
+          method: ANY
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/whatsapp/{proxy+}
+          method: ANY
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
 
 package:
   excludeDevDependencies: true

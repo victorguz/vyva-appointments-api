@@ -191,26 +191,28 @@ export class WhatsAppMetaService {
 
   /**
    * Returns the test/sandbox phone numbers registered for this Phone Number ID in Meta.
-   * Only relevant for test mode accounts; returns an empty array for production accounts.
+   * When the endpoint responds successfully the account is in sandbox/test mode.
    */
   async listTestPhoneNumbers(
     credentials: WhatsAppIntegrationData,
-  ): Promise<WhatsAppTestPhoneNumber[]> {
+  ): Promise<{ phoneNumbers: WhatsAppTestPhoneNumber[]; isSandbox: boolean }> {
     const { ok, json } = await this.graphGet<{
       data?: { display_phone_number?: string }[];
       error?: MetaGraphError;
     }>(credentials, `${credentials.phoneNumberId}/whatsapp_test_phone_numbers`);
 
     if (!ok) {
-      // Production accounts return 400/404 for this endpoint — treat as empty list
-      return [];
+      // Production accounts return 400/404 for this endpoint
+      return { phoneNumbers: [], isSandbox: false };
     }
 
-    return (json.data ?? [])
+    const phoneNumbers = (json.data ?? [])
       .map((row) => ({
         phoneNumber: (row.display_phone_number ?? '').replace(/\D/g, ''),
       }))
       .filter((row) => row.phoneNumber.length > 0);
+
+    return { phoneNumbers, isSandbox: true };
   }
 
   /**

@@ -192,3 +192,10 @@ export class MetaOAuthCallbackDto {
   @IsString()
   redirectUri?: string;
 }
+
+export class SaveWhatsAppTestUserDto {
+  @ApiProperty({ description: 'E.164 digits only' })
+  @IsString()
+  @IsNotEmpty()
+  phoneNumber: string;
+}

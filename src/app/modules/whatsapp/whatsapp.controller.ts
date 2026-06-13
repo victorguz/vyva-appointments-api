@@ -30,6 +30,7 @@ import {
   WhatsAppMessagesPageDto,
   RegisterTemplatesBatchDto,
   TemplateRegistrationResultDto,
+  SaveWhatsAppTestUserDto,
 } from './dto/whatsapp.dto';
 import {
   WhatsAppTemplateSummary,
@@ -95,15 +96,26 @@ export class WhatsAppController {
     @Res() res: Response,
   ): Promise<void> {
     const body = req.body as Record<string, unknown>;
-    const rawBody = req.rawBody ?? JSON.stringify(body);
+    const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(body));
     const signature = req.headers['x-hub-signature-256'] as string | undefined;
 
     if (!(await this.metaService.verifySignature(rawBody, signature))) {
+      this.logger.warn(
+        `Webhook signature rejected (rawBody=${req.rawBody ? 'present' : 'missing'})`,
+      );
       res.status(HttpStatus.FORBIDDEN).json({ success: false });
       return;
     }
 
-    await this.whatsAppService.handleWebhookPayload(body);
+    try {
+      await this.whatsAppService.handleWebhookPayload(body);
+    } catch (err) {
+      this.logger.error(
+        `Webhook payload handling failed: ${(err as Error)?.message ?? err}`,
+        (err as Error)?.stack,
+      );
+    }
+
     res.status(HttpStatus.OK).json({ success: true });
   }
 
@@ -226,9 +238,37 @@ export class WhatsAppController {
   })
   listTestPhoneNumbers(
     @Req() req: Request,
-  ): Promise<GenericResponse<WhatsAppTestPhoneNumber[]>> {
+  ): Promise<
+    GenericResponse<{
+      phoneNumbers: WhatsAppTestPhoneNumber[];
+      isSandbox: boolean;
+    }>
+  > {
     const idBusiness = (req as any)['idBusiness'] as string;
     return this.whatsAppService.listTestPhoneNumbers(idBusiness);
+  }
+
+  @Get('integration/test-users')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'List phone numbers previously used for WhatsApp test messages',
+  })
+  getTestUsers(@Req() req: Request): Promise<GenericResponse<string[]>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.getTestUsers(idBusiness);
+  }
+
+  @Post('integration/test-users')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'Save a phone number used for WhatsApp test messages',
+  })
+  addTestUser(
+    @Body() dto: SaveWhatsAppTestUserDto,
+    @Req() req: Request,
+  ): Promise<GenericResponse<string[]>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.addTestUser(idBusiness, dto.phoneNumber);
   }
 
   @Post('integration/meta-oauth-callback')

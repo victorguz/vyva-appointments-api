@@ -67,7 +67,8 @@ export class IntegrationsCredentialsService {
       }
       const data = this.parseIntegrationData(integration.data);
       if (
-        data?.phoneNumberId === normalizedPhoneNumberId &&
+        data?.phoneNumberId &&
+        String(data.phoneNumberId) === normalizedPhoneNumberId &&
         integration.idBusiness
       ) {
         return {
@@ -89,6 +90,11 @@ export class IntegrationsCredentialsService {
       .exec();
 
     const secrets = new Set<string>();
+    const envSecret = process.env.META_APP_SECRET?.trim();
+    if (envSecret) {
+      secrets.add(envSecret);
+    }
+
     for (const item of rows) {
       const integration = item.toJSON() as Integration;
       if (!integration.isActive) {
@@ -132,6 +138,9 @@ export class IntegrationsCredentialsService {
           continue;
         }
         if (data.phoneNumberId === normalizedToken) {
+          return true;
+        }
+        if (String(data.phoneNumberId) === normalizedToken) {
           return true;
         }
       }

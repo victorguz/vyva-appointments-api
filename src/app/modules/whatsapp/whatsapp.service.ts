@@ -14,6 +14,7 @@ import {
   WhatsAppMessageStatus,
 } from '../../schemas/whatsapp-message.schema';
 import { WhatsAppIntegrationData } from '../../schemas/integration.schema';
+import { Domain, DomainKey } from '../../schemas/domain.schema';
 import { User } from '../../schemas/user.schema';
 import {
   SendWhatsAppMessageDto,
@@ -45,6 +46,7 @@ import { WhatsAppMetaService } from './whatsapp-meta.service';
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
+  private static readonly WHATSAPP_TEST_USERS_GROUP = 'whatsappTestUsers';
 
   constructor(
     @InjectModel('WhatsAppMessage')
@@ -54,6 +56,8 @@ export class WhatsAppService {
       WhatsAppConversation,
       WhatsAppConversationKey
     >,
+    @InjectModel('Domain')
+    private readonly domainModel: Model<Domain, DomainKey>,
     private readonly credentialsService: IntegrationsCredentialsService,
     private readonly metaService: WhatsAppMetaService,
   ) {}
@@ -217,7 +221,7 @@ export class WhatsAppService {
 
         const resolved =
           await this.credentialsService.resolveBusinessByPhoneNumberId(
-            phoneNumberId,
+            String(phoneNumberId),
           );
         if (!resolved) {
           this.logger.warn(
@@ -230,13 +234,27 @@ export class WhatsAppService {
 
         if (Array.isArray(value.messages)) {
           for (const msg of value.messages) {
-            await this.persistInboundMessage(idBusiness, msg, value);
+            try {
+              await this.persistInboundMessage(idBusiness, msg, value);
+            } catch (err) {
+              this.logger.error(
+                `Failed to persist inbound message ${msg?.id ?? 'unknown'}: ${(err as Error)?.message ?? err}`,
+                (err as Error)?.stack,
+              );
+            }
           }
         }
 
         if (Array.isArray(value.statuses)) {
           for (const status of value.statuses) {
-            await this.patchMessageStatus(status);
+            try {
+              await this.patchMessageStatus(status);
+            } catch (err) {
+              this.logger.error(
+                `Failed to patch message status ${status?.id ?? 'unknown'}: ${(err as Error)?.message ?? err}`,
+                (err as Error)?.stack,
+              );
+            }
           }
         }
       }
@@ -275,15 +293,17 @@ export class WhatsAppService {
       return;
     }
 
-    const waPhone = String(msg.from || '').replace(/\D/g, '');
+    const waPhone = normalizeColombiaWaPhone(String(msg.from || ''));
     if (!waPhone) {
       return;
     }
 
+    const displayName = this.resolveContactDisplayName(value, waPhone);
+
     const conversation = await this.findOrCreateConversation(
       idBusiness,
       waPhone,
-      msg.profile?.name,
+      displayName,
     );
 
     const timestamp = Number(msg.timestamp) * 1000 || Date.now();
@@ -473,20 +493,29 @@ export class WhatsAppService {
     waPhone: string,
     displayName?: string,
   ): Promise<WhatsAppConversation> {
+    const normalizedPhone = normalizeColombiaWaPhone(waPhone);
     const all = await this.conversationModel
       .query('idBusiness')
       .eq(idBusiness)
       .using('idBusiness-lastMessageAt-index')
       .exec();
 
-    const found = all.find(
-      (c) => (c.toJSON() as WhatsAppConversation).waPhone === waPhone,
-    );
+    const found = all.find((c) => {
+      const conv = c.toJSON() as WhatsAppConversation;
+      return normalizeColombiaWaPhone(conv.waPhone) === normalizedPhone;
+    });
     if (found) {
       const conv = found.toJSON() as WhatsAppConversation;
       if (displayName && !conv.displayName) {
         await this.conversationModel.update({ id: conv.id }, { displayName });
         conv.displayName = displayName;
+      }
+      if (conv.waPhone !== normalizedPhone) {
+        await this.conversationModel.update(
+          { id: conv.id },
+          { waPhone: normalizedPhone },
+        );
+        conv.waPhone = normalizedPhone;
       }
       return conv;
     }
@@ -495,13 +524,31 @@ export class WhatsAppService {
     const conversation: WhatsAppConversation = {
       id: uuidv4(),
       idBusiness,
-      waPhone,
-      displayName: displayName || waPhone,
+      waPhone: normalizedPhone,
+      displayName: displayName || normalizedPhone,
       lastMessageAt: now,
       lastMessagePreview: '',
     };
     await this.conversationModel.create(conversation);
     return conversation;
+  }
+
+  private resolveContactDisplayName(
+    value: Record<string, any>,
+    waPhone: string,
+  ): string | undefined {
+    const normalizedPhone = normalizeColombiaWaPhone(waPhone);
+    const contacts = value.contacts as
+      | Array<{ wa_id?: string; profile?: { name?: string } }>
+      | undefined;
+
+    const match = contacts?.find(
+      (contact) =>
+        normalizeColombiaWaPhone(String(contact.wa_id ?? '')) ===
+        normalizedPhone,
+    );
+
+    return match?.profile?.name?.trim() || undefined;
   }
 
   private async touchConversation(
@@ -649,18 +696,107 @@ export class WhatsAppService {
 
   async listTestPhoneNumbers(
     idBusiness: string,
-  ): Promise<GenericResponse<WhatsAppTestPhoneNumber[]>> {
+  ): Promise<
+    GenericResponse<{
+      phoneNumbers: WhatsAppTestPhoneNumber[];
+      isSandbox: boolean;
+    }>
+  > {
     const creds = await this.credentialsService.getByBusinessId(idBusiness);
     if (!this.credentialsService.isConfigured(creds)) {
       throw new Error('MS042');
     }
 
     try {
-      const numbers = await this.metaService.listTestPhoneNumbers(creds!);
-      return new GenericResponse(numbers);
+      const result = await this.metaService.listTestPhoneNumbers(creds!);
+      return new GenericResponse(result);
     } catch (err) {
-      return this.metaErrorResponse(err, []);
+      return this.metaErrorResponse(err, { phoneNumbers: [], isSandbox: false });
     }
+  }
+
+  async getTestUsers(idBusiness: string): Promise<GenericResponse<string[]>> {
+    const phones = await this.loadTestUsersFromDomain(idBusiness);
+    return new GenericResponse(phones);
+  }
+
+  async addTestUser(
+    idBusiness: string,
+    phoneNumber: string,
+  ): Promise<GenericResponse<string[]>> {
+    const normalized = normalizeColombiaWaPhone(phoneNumber);
+    if (!normalized) {
+      throw new Error('MS043');
+    }
+
+    const phones = await this.loadTestUsersFromDomain(idBusiness);
+    const next = [
+      normalized,
+      ...phones.filter((phone) => phone !== normalized),
+    ];
+    await this.saveTestUsersDomain(idBusiness, next);
+    return new GenericResponse(next);
+  }
+
+  private async loadTestUsersFromDomain(idBusiness: string): Promise<string[]> {
+    const domains = await this.domainModel
+      .query('idBusiness')
+      .eq(idBusiness)
+      .using('domain-idBusiness-index')
+      .where('group')
+      .eq(WhatsAppService.WHATSAPP_TEST_USERS_GROUP)
+      .exec();
+
+    if (!domains?.length) {
+      return [];
+    }
+
+    const record = domains[0].toJSON() as Domain;
+    try {
+      const parsed = JSON.parse(record.value ?? '[]') as unknown;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  private async saveTestUsersDomain(
+    idBusiness: string,
+    phones: string[],
+  ): Promise<void> {
+    const value = JSON.stringify(phones);
+    const domains = await this.domainModel
+      .query('idBusiness')
+      .eq(idBusiness)
+      .using('domain-idBusiness-index')
+      .where('group')
+      .eq(WhatsAppService.WHATSAPP_TEST_USERS_GROUP)
+      .exec();
+
+    if (domains?.length) {
+      const record = domains[0].toJSON() as Domain;
+      await this.domainModel.update({ id: record.id }, { value });
+      return;
+    }
+
+    await this.domainModel.create({
+      id: uuidv4(),
+      idBusiness,
+      name: WhatsAppService.WHATSAPP_TEST_USERS_GROUP,
+      group: WhatsAppService.WHATSAPP_TEST_USERS_GROUP,
+      value,
+      description: 'Números usados en pruebas de WhatsApp',
+      isActive: true,
+      order: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   }
 
   async handleMetaOAuthCallback(

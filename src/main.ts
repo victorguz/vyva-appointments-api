@@ -14,6 +14,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Express, json, urlencoded } from 'express';
 
 import { AppModule } from './app/app.module';
+import { buildCorsOptions } from './cors.config';
 
 async function bootstrap(
   expressApp: Express | undefined = undefined,
@@ -31,11 +32,13 @@ async function bootstrap(
         );
 
   app.setGlobalPrefix('api');
+  app.enableCors(buildCorsOptions());
   app.use(
     json({
       limit: '10mb',
       verify: (req: any, _res, buf) => {
-        if (req.url?.includes('/whatsapp/webhook')) {
+        const path = `${req.originalUrl || req.url || ''}`;
+        if (path.includes('/whatsapp/webhook')) {
           req.rawBody = buf;
         }
       },
