@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { WhatsAppMessage } from '../../../schemas/whatsapp-message.schema';
+import { WhatsAppMessageConfig } from '../../../shared/whatsapp-message-config.types';
 import {
   ArrayMaxSize,
   IsArray,
@@ -9,8 +10,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  Length,
-  Matches,
+  IsBoolean,
   Max,
   Min,
   ValidateNested,
@@ -37,6 +37,16 @@ export class SendWhatsAppMessageDto {
   @IsString()
   @IsNotEmpty()
   clientMessageId: string;
+
+  @ApiProperty({ required: false, description: 'Vyva CRM customer linked to this chat' })
+  @IsOptional()
+  @IsUUID()
+  idCustomer?: string;
+
+  @ApiProperty({ required: false, description: 'Display name stored on the conversation' })
+  @IsOptional()
+  @IsString()
+  displayName?: string;
 }
 
 export class ListMessagesQueryDto {
@@ -67,6 +77,14 @@ export class WhatsAppMessagesPageDto {
 
   @ApiProperty({ required: false })
   serviceWindowExpiresAt?: number;
+}
+
+export class WhatsAppUnreadCountsDto {
+  @ApiProperty()
+  total: number;
+
+  @ApiProperty({ type: Object })
+  byConversationId: Record<string, number>;
 }
 
 export class WhatsAppTemplateDto {
@@ -119,10 +137,39 @@ export class SendWhatsAppTemplateDto {
   @IsString()
   bodyPreview?: string;
 
+  @ApiProperty({
+    required: false,
+    description: 'Meta template body with {{1}}, {{2}}, … placeholders',
+  })
+  @IsOptional()
+  @IsString()
+  templateBody?: string;
+
   @ApiProperty({ description: 'Client idempotency key' })
   @IsString()
   @IsNotEmpty()
   clientMessageId: string;
+
+  @ApiProperty({ required: false, description: 'Vyva CRM customer linked to this chat' })
+  @IsOptional()
+  @IsUUID()
+  idCustomer?: string;
+
+  @ApiProperty({ required: false, description: 'Display name stored on the conversation' })
+  @IsOptional()
+  @IsString()
+  displayName?: string;
+}
+
+export class LinkWhatsAppConversationCustomerDto {
+  @ApiProperty()
+  @IsUUID()
+  idCustomer: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  displayName?: string;
 }
 
 export class RegisterTemplateItemDto {
@@ -169,13 +216,25 @@ export class TemplateRegistrationResultDto {
   error?: string;
 }
 
-export class VerifyRegisterDto {
-  @ApiProperty({ description: 'SMS verification code or two-step PIN (6 digits)' })
-  @IsString()
-  @IsNotEmpty()
-  @Length(6, 6)
-  @Matches(/^\d{6}$/)
-  code: string;
+export class CompleteIntegrationSetupDto {
+  @ApiProperty({
+    required: false,
+    description:
+      'When true, Cloud API registration uses META_SYSTEM_USER_ACCESS_TOKEN from the server',
+  })
+  @IsOptional()
+  @IsBoolean()
+  useSystemUserToken?: boolean;
+}
+
+export class IntegrationSetupResultDto {
+  phoneRegistered: boolean;
+  templatesRegistered: boolean;
+  setupComplete: boolean;
+  setupError?: string;
+  phoneRegistrationError?: string;
+  templatesRegistrationError?: string;
+  templateResults?: TemplateRegistrationResultDto[];
 }
 
 export class MetaOAuthCallbackDto {
@@ -198,4 +257,96 @@ export class SaveWhatsAppTestUserDto {
   @IsString()
   @IsNotEmpty()
   phoneNumber: string;
+}
+
+export class UpdateWhatsAppBusinessProfileDto {
+  @ApiProperty({ required: false, maxLength: 139 })
+  @IsOptional()
+  @IsString()
+  about?: string;
+
+  @ApiProperty({ required: false, maxLength: 256 })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiProperty({ required: false, maxLength: 512 })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ required: false, maxLength: 128 })
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @ApiProperty({ required: false, type: [String], maxItems: 2 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(2)
+  @IsString({ each: true })
+  websites?: string[];
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  vertical?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Base64 data URL (image/jpeg or image/png) for WhatsApp profile picture',
+  })
+  @IsOptional()
+  @IsString()
+  profilePictureBase64?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'New WhatsApp display name (requires Meta approval)',
+  })
+  @IsOptional()
+  @IsString()
+  newDisplayName?: string;
+}
+
+export class SaveWhatsAppMessageConfigDto {
+  @ApiProperty({ type: Object })
+  config!: WhatsAppMessageConfig;
+}
+
+export class SaveWhatsAppTemplateDto {
+  @ApiProperty({ description: 'Message body with Vyva variables {{customerName}}, …' })
+  @IsString()
+  @IsNotEmpty()
+  body: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ required: false, enum: ['UTILITY', 'MARKETING', 'AUTHENTICATION'] })
+  @IsOptional()
+  @IsIn(['UTILITY', 'MARKETING', 'AUTHENTICATION'])
+  metaCategory?: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION';
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  dateFormat?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  timeFormat?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  metaLanguage?: string;
 }

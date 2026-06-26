@@ -19,21 +19,55 @@ export function extractEdgeUserContext(
 function extractFromApiGatewayAuthorizer(
   request: Request,
 ): EdgeUserContext | undefined {
-  const event = (request as any).apiGateway?.event;
-  const lambdaContext = event?.requestContext?.authorizer?.lambda;
+  const apiGatewayEvent = resolveApiGatewayEvent(request);
+  if (!apiGatewayEvent) return undefined;
+
+  const requestContext = apiGatewayEvent.requestContext as
+    | Record<string, unknown>
+    | undefined;
+  const authorizer = requestContext?.authorizer as
+    | Record<string, unknown>
+    | undefined;
+  if (!authorizer) return undefined;
+
+  const lambdaContext = authorizer.lambda as Record<string, string> | undefined;
   if (lambdaContext?.sub) {
     return mapAuthorizerContext(lambdaContext);
   }
 
-  const legacyContext = event?.requestContext?.authorizer;
-  if (legacyContext?.sub) {
-    return mapAuthorizerContext(legacyContext);
+  if (typeof authorizer.sub === 'string') {
+    return mapAuthorizerContext(authorizer as Record<string, string>);
   }
 
   return undefined;
 }
 
-function mapAuthorizerContext(
+function resolveApiGatewayEvent(
+  request: Request,
+): Record<string, unknown> | undefined {
+  const fromMiddleware = (request as any).apiGateway?.event as
+    | Record<string, unknown>
+    | undefined;
+  if (fromMiddleware) return fromMiddleware;
+
+  const encodedEvent = request.headers['x-apigateway-event'];
+  const rawValue =
+    typeof encodedEvent === 'string'
+      ? encodedEvent
+      : Array.isArray(encodedEvent)
+        ? encodedEvent[0]
+        : undefined;
+
+  if (!rawValue) return undefined;
+
+  try {
+    return JSON.parse(decodeURIComponent(rawValue)) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+export function mapAuthorizerContext(
   context: Record<string, string>,
 ): EdgeUserContext {
   return {

@@ -62,13 +62,14 @@ export class EnvironmentVariables {
   @IsString()
   VYVAPOS_ID_BUSINESS?: string;
 
-  @IsOptional()
   @IsString()
   META_APP_ID?: string;
 
-  @IsOptional()
   @IsString()
   META_APP_SECRET?: string;
+
+  @IsString()
+  META_SYSTEM_USER_ACCESS_TOKEN?: string;
 
   @IsOptional()
   @IsString()
@@ -91,6 +92,7 @@ const validationSchema = Joi.object({
   REGION: Joi.string().optional(),
   META_APP_ID: Joi.string().optional().allow(''),
   META_APP_SECRET: Joi.string().optional().allow(''),
+  META_SYSTEM_USER_ACCESS_TOKEN: Joi.string().required(),
   META_OAUTH_REDIRECT_URI: Joi.string().optional().allow(''),
   FRONTEND_URL: Joi.string().optional().allow(''),
 });

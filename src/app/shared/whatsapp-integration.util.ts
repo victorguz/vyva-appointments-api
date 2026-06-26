@@ -1,4 +1,8 @@
 import { WhatsAppIntegrationData } from '../schemas/integration.schema';
+import {
+  integrationRowTimestamp,
+  listDuplicateIntegrationRows,
+} from './integration-business.util';
 
 /** Mask returned to the frontend when credentials already exist server-side. */
 export const WHATSAPP_CREDENTIAL_MASK = '********';
@@ -45,7 +49,14 @@ export function normalizeWhatsAppIntegrationData(
     accessToken: String(data.accessToken ?? '').trim(),
     appSecret: String(data.appSecret ?? '').trim(),
     phoneRegistered: data.phoneRegistered,
+    metaPaymentMethodConfirmed: data.metaPaymentMethodConfirmed,
     useCredentials: data.useCredentials,
+    useSystemUserTokenForPhoneVerification:
+      data.useSystemUserTokenForPhoneVerification,
+    twoStepPin: data.twoStepPin
+      ? String(data.twoStepPin).trim() || undefined
+      : undefined,
+    metaEmbeddedSignup: data.metaEmbeddedSignup,
   };
 }
 
@@ -84,14 +95,25 @@ export function mergeWhatsAppIntegrationData(
       ? existing.appSecret
       : String(incoming.appSecret ?? '').trim(),
     phoneRegistered: incoming.phoneRegistered ?? existing.phoneRegistered,
+    metaPaymentMethodConfirmed:
+      incoming.metaPaymentMethodConfirmed ?? existing.metaPaymentMethodConfirmed,
     useCredentials: incoming.useCredentials ?? existing.useCredentials,
+    useSystemUserTokenForPhoneVerification:
+      incoming.useSystemUserTokenForPhoneVerification ??
+      existing.useSystemUserTokenForPhoneVerification,
+    twoStepPin: incoming.twoStepPin ?? existing.twoStepPin,
+    metaEmbeddedSignup: incoming.metaEmbeddedSignup ?? existing.metaEmbeddedSignup,
   });
 }
 
 function isWhatsAppPreferenceOnlyUpdate(
   incoming: Partial<WhatsAppIntegrationData>,
 ): boolean {
-  if (incoming.useCredentials === undefined) {
+  const hasPreferenceUpdate =
+    incoming.useCredentials !== undefined ||
+    incoming.useSystemUserTokenForPhoneVerification !== undefined;
+
+  if (!hasPreferenceUpdate) {
     return false;
   }
 
@@ -99,7 +121,9 @@ function isWhatsAppPreferenceOnlyUpdate(
     incoming.phoneNumberId !== undefined ||
     incoming.accessToken !== undefined ||
     incoming.appSecret !== undefined ||
-    incoming.phoneRegistered !== undefined;
+    incoming.phoneRegistered !== undefined ||
+    incoming.metaPaymentMethodConfirmed !== undefined ||
+    incoming.metaEmbeddedSignup !== undefined;
 
   if (credentialFieldsProvided && !hasMaskedWhatsAppCredentials(incoming)) {
     return false;
@@ -113,14 +137,10 @@ export function resolveWhatsAppIntegrationDataForSave(
   existing: WhatsAppIntegrationData | null,
 ): WhatsAppIntegrationData {
   if (isWhatsAppPreferenceOnlyUpdate(incoming)) {
-    return existing
-      ? mergeWhatsAppIntegrationData(existing, incoming)
-      : normalizeWhatsAppIntegrationData({
-          phoneNumberId: '',
-          accessToken: '',
-          appSecret: '',
-          useCredentials: incoming.useCredentials,
-        });
+    if (!existing) {
+      throw new Error('MS042');
+    }
+    return mergeWhatsAppIntegrationData(existing, incoming);
   }
 
   const resolved = existing
@@ -137,3 +157,31 @@ export function resolveWhatsAppIntegrationDataForSave(
 
   return resolved;
 }
+
+/** Prefer a row with real credentials over preference-only shells. */
+export function selectCanonicalWhatsAppIntegrationRow<
+  T extends {
+    id: string;
+    isActive: boolean;
+    updatedAt?: Date;
+    createdAt?: Date;
+  },
+>(rows: T[], isConfiguredRow: (row: T) => boolean): T | null {
+  if (!rows?.length) {
+    return null;
+  }
+
+  return [...rows].sort((a, b) => {
+    const aConfigured = isConfiguredRow(a);
+    const bConfigured = isConfiguredRow(b);
+    if (aConfigured !== bConfigured) {
+      return aConfigured ? -1 : 1;
+    }
+    if (a.isActive !== b.isActive) {
+      return a.isActive ? -1 : 1;
+    }
+    return integrationRowTimestamp(b) - integrationRowTimestamp(a);
+  })[0];
+}
+
+export { listDuplicateIntegrationRows };

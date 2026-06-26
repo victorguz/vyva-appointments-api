@@ -12,6 +12,8 @@ import {
   isWhatsAppConfigured,
   normalizeWhatsAppIntegrationData,
   resolveWhatsAppIntegrationDataForSave,
+  selectCanonicalWhatsAppIntegrationRow,
+  listDuplicateIntegrationRows,
 } from '../../shared/whatsapp-integration.util';
 
 @Injectable()
@@ -26,19 +28,11 @@ export class IntegrationsCredentialsService {
   async getByBusinessId(
     idBusiness: string,
   ): Promise<WhatsAppIntegrationData | null> {
-    const rows = await this.integrationModel
-      .scan()
-      .where('type')
-      .eq(IntegrationType.WHATSAPP)
-      .where('idBusiness')
-      .eq(idBusiness)
-      .exec();
-
-    if (!rows?.length) {
+    const row = await this.dedupeWhatsAppIntegrationRow(idBusiness);
+    if (!row) {
       return null;
     }
 
-    const row = rows[0].toJSON() as Integration;
     if (!row.isActive) {
       return null;
     }
@@ -109,51 +103,6 @@ export class IntegrationsCredentialsService {
     return [...secrets];
   }
 
-  /**
-   * Meta webhook GET challenge: Verify Token in Developer Console must match phoneNumberId.
-   */
-  async isWebhookVerifyTokenValid(token: string): Promise<boolean> {
-    const normalizedToken = token?.trim();
-    if (!normalizedToken) {
-      return false;
-    }
-
-    try {
-      const rows = await this.integrationModel
-        .scan()
-        .where('type')
-        .eq(IntegrationType.WHATSAPP)
-        .exec();
-
-      for (const item of rows) {
-        const integration = item.toJSON() as Integration;
-        if (!integration.isActive) {
-          continue;
-        }
-        const data = this.parseIntegrationData(integration.data);
-        if (!data) {
-          this.logger.warn(
-            `Could not decrypt integration ${integration.id} for webhook verify token check`,
-          );
-          continue;
-        }
-        if (data.phoneNumberId === normalizedToken) {
-          return true;
-        }
-        if (String(data.phoneNumberId) === normalizedToken) {
-          return true;
-        }
-      }
-      return false;
-    } catch (err) {
-      this.logger.error(
-        `Webhook verify token scan failed: ${(err as Error)?.message ?? err}`,
-        (err as Error)?.stack,
-      );
-      throw err;
-    }
-  }
-
   isConfigured(data: WhatsAppIntegrationData | null): boolean {
     return isWhatsAppConfigured(data);
   }
@@ -163,24 +112,22 @@ export class IntegrationsCredentialsService {
     userId: string,
     data: WhatsAppIntegrationData,
   ): Promise<void> {
-    const rows = await this.integrationModel
-      .scan()
-      .where('type')
-      .eq(IntegrationType.WHATSAPP)
-      .where('idBusiness')
-      .eq(idBusiness)
-      .exec();
+    const normalizedBusinessId = idBusiness?.trim();
+    if (!normalizedBusinessId) {
+      throw new Error('idBusiness is required to save WhatsApp integration');
+    }
 
-    const existing =
-      rows?.length > 0
-        ? this.parseIntegrationData((rows[0].toJSON() as Integration).data)
-        : null;
+    const existingRow = await this.dedupeWhatsAppIntegrationRow(
+      normalizedBusinessId,
+    );
+    const existing = existingRow
+      ? this.parseIntegrationData(existingRow.data)
+      : null;
 
     const resolved = resolveWhatsAppIntegrationDataForSave(data, existing);
     const encryptedData = encrypt(JSON.stringify(resolved));
 
-    if (rows?.length) {
-      const existingRow = rows[0].toJSON() as Integration;
+    if (existingRow) {
       await this.integrationModel.update(
         { id: existingRow.id },
         { data: encryptedData, isActive: true },
@@ -192,28 +139,106 @@ export class IntegrationsCredentialsService {
       id: uuidv4(),
       type: IntegrationType.WHATSAPP,
       userId,
-      idBusiness,
+      idBusiness: normalizedBusinessId,
       data: encryptedData,
       isActive: true,
     });
   }
 
+  async markPhoneRegistered(
+    idBusiness: string,
+    twoStepPin?: string,
+  ): Promise<void> {
+    const row = await this.getIntegrationRow(idBusiness);
+    if (!row) {
+      return;
+    }
+
+    const existing = this.parseIntegrationData(row.data);
+    if (!existing) {
+      return;
+    }
+
+    const resolved = resolveWhatsAppIntegrationDataForSave(
+      {
+        ...existing,
+        phoneRegistered: true,
+        twoStepPin: twoStepPin?.trim() || existing.twoStepPin,
+      },
+      existing,
+    );
+    const encryptedData = encrypt(JSON.stringify(resolved));
+    await this.integrationModel.update({ id: row.id }, { data: encryptedData });
+  }
+
+  async markMetaPaymentMethodConfirmed(idBusiness: string): Promise<void> {
+    const row = await this.getIntegrationRow(idBusiness);
+    if (!row) {
+      return;
+    }
+
+    const existing = this.parseIntegrationData(row.data);
+    if (!existing) {
+      return;
+    }
+
+    const resolved = resolveWhatsAppIntegrationDataForSave(
+      {
+        ...existing,
+        metaPaymentMethodConfirmed: true,
+      },
+      existing,
+    );
+    const encryptedData = encrypt(JSON.stringify(resolved));
+    await this.integrationModel.update({ id: row.id }, { data: encryptedData });
+  }
+
   async getIntegrationRow(
     idBusiness: string,
   ): Promise<Integration | null> {
+    return this.dedupeWhatsAppIntegrationRow(idBusiness);
+  }
+
+  private async listWhatsAppIntegrationRows(
+    idBusiness: string,
+  ): Promise<Integration[]> {
+    const normalizedBusinessId = idBusiness?.trim();
+    if (!normalizedBusinessId) {
+      return [];
+    }
+
     const rows = await this.integrationModel
       .scan()
       .where('type')
       .eq(IntegrationType.WHATSAPP)
       .where('idBusiness')
-      .eq(idBusiness)
+      .eq(normalizedBusinessId)
       .exec();
 
-    if (!rows?.length) {
+    return (rows ?? []).map((row) => row.toJSON() as Integration);
+  }
+
+  /** Ensures a single WhatsApp integration record exists per Vyva business. */
+  private async dedupeWhatsAppIntegrationRow(
+    idBusiness: string,
+  ): Promise<Integration | null> {
+    const rows = await this.listWhatsAppIntegrationRows(idBusiness);
+    const canonical = selectCanonicalWhatsAppIntegrationRow(rows, (row) => {
+      const data = this.parseIntegrationData(row.data);
+      return isWhatsAppConfigured(data);
+    });
+    if (!canonical) {
       return null;
     }
 
-    return rows[0].toJSON() as Integration;
+    for (const duplicate of listDuplicateIntegrationRows(rows, canonical.id)) {
+      this.logger.warn(
+        `Removing duplicate WhatsApp integration ${duplicate.id} for business ${idBusiness}`,
+      );
+      await this.integrationModel.delete({ id: duplicate.id });
+    }
+
+    return canonical;
   }
 
   /**

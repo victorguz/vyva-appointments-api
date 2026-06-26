@@ -6,7 +6,9 @@ import {
   HttpStatus,
   Logger,
   Param,
+  Patch,
   Post,
+  Put,
   Query,
   Req,
   Res,
@@ -25,17 +27,24 @@ import {
   SendWhatsAppMessageDto,
   SendWhatsAppTemplateDto,
   ListMessagesQueryDto,
-  VerifyRegisterDto,
+  LinkWhatsAppConversationCustomerDto,
+  CompleteIntegrationSetupDto,
+  IntegrationSetupResultDto,
   MetaOAuthCallbackDto,
   WhatsAppMessagesPageDto,
+  WhatsAppUnreadCountsDto,
   RegisterTemplatesBatchDto,
   TemplateRegistrationResultDto,
+  SaveWhatsAppMessageConfigDto,
+  SaveWhatsAppTemplateDto,
   SaveWhatsAppTestUserDto,
+  UpdateWhatsAppBusinessProfileDto,
 } from './dto/whatsapp.dto';
 import {
   WhatsAppTemplateSummary,
   WhatsAppTokenDiagnostics,
   WhatsAppTestPhoneNumber,
+  WhatsAppBusinessProfile,
 } from './whatsapp-meta.service';
 import { WhatsAppService } from './whatsapp.service';
 import { WhatsAppMetaService } from './whatsapp-meta.service';
@@ -129,6 +138,18 @@ export class WhatsAppController {
     return this.whatsAppService.listConversations(idBusiness);
   }
 
+  @Get('conversations/unread-counts')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'Unread inbound WhatsApp message counts per conversation',
+  })
+  getUnreadCounts(
+    @Req() req: Request,
+  ): Promise<GenericResponse<WhatsAppUnreadCountsDto>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.getUnreadCounts(idBusiness);
+  }
+
   @Get('conversations/:idConversation/messages')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'List messages in a conversation' })
@@ -159,6 +180,22 @@ export class WhatsAppController {
     );
   }
 
+  @Patch('conversations/:idConversation/customer')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({ summary: 'Link a WhatsApp conversation to a Vyva customer' })
+  linkConversationCustomer(
+    @Param('idConversation') idConversation: string,
+    @Body() dto: LinkWhatsAppConversationCustomerDto,
+    @Req() req: Request,
+  ): Promise<GenericResponse<WhatsAppConversation>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.linkConversationCustomer(
+      idBusiness,
+      idConversation,
+      dto,
+    );
+  }
+
   @Post('messages')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Send a WhatsApp text message' })
@@ -173,13 +210,74 @@ export class WhatsAppController {
   @Get('templates')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({
-    summary: 'List approved WhatsApp message templates from Meta',
+    summary: 'List WhatsApp message templates from Meta',
   })
   listTemplates(
     @Req() req: Request,
+    @Query('scope') scope?: string,
   ): Promise<GenericResponse<WhatsAppTemplateSummary[]>> {
     const idBusiness = (req as any)['idBusiness'] as string;
-    return this.whatsAppService.listTemplates(idBusiness);
+    const approvedOnly = scope !== 'all';
+    return this.whatsAppService.listTemplates(idBusiness, approvedOnly);
+  }
+
+  @Get('templates/catalog')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary:
+      'List WhatsApp templates merged from domain config and Meta (read-only)',
+  })
+  listTemplateCatalog(@Req() req: Request) {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.listTemplateCatalog(idBusiness);
+  }
+
+  @Get('templates/:key')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'Load a single template for the editor (domain + Meta, read-only)',
+  })
+  getTemplateEditorDetail(
+    @Param('key') key: string,
+    @Req() req: Request,
+  ) {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.getTemplateEditorDetail(idBusiness, key);
+  }
+
+  @Put('templates/:key')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'Save template to domain and register/update in Meta',
+  })
+  saveTemplate(
+    @Param('key') key: string,
+    @Body() dto: SaveWhatsAppTemplateDto,
+    @Req() req: Request,
+  ) {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.saveTemplate(idBusiness, key, dto);
+  }
+
+  @Get('message-config')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'Load WhatsApp message templates config from domain',
+  })
+  getMessageConfig(@Req() req: Request) {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.getMessageConfig(idBusiness);
+  }
+
+  @Put('message-config')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({ summary: 'Save WhatsApp message templates config' })
+  saveMessageConfig(
+    @Body() dto: SaveWhatsAppMessageConfigDto,
+    @Req() req: Request,
+  ) {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.saveMessageConfig(idBusiness, dto.config);
   }
 
   @Post('templates/register')
@@ -271,6 +369,19 @@ export class WhatsAppController {
     return this.whatsAppService.addTestUser(idBusiness, dto.phoneNumber);
   }
 
+  @Post('integration/confirm-payment-method')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary:
+      'Persist onboarding confirmation that Meta Business payment method was registered',
+  })
+  confirmMetaPaymentMethod(
+    @Req() req: Request,
+  ): Promise<GenericResponse<{ metaPaymentMethodConfirmed: boolean }>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.confirmMetaPaymentMethod(idBusiness);
+  }
+
   @Post('integration/meta-oauth-callback')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({
@@ -280,7 +391,14 @@ export class WhatsAppController {
   metaOAuthCallback(
     @Body() dto: MetaOAuthCallbackDto,
     @Req() req: Request,
-  ): Promise<GenericResponse<{ phoneNumberId: string; wabaId: string }>> {
+  ): Promise<
+    GenericResponse<{
+      phoneNumberId: string;
+      wabaId: string;
+      registered: boolean;
+      registrationError?: string;
+    }>
+  > {
     const idBusiness = (req as any)['idBusiness'] as string;
     const user = (req as any)['user'] as User;
     return this.whatsAppService.handleMetaOAuthCallback(
@@ -291,32 +409,46 @@ export class WhatsAppController {
     );
   }
 
-  @Post('integration/request-code')
+  @Post('integration/complete-setup')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({
-    summary: 'Save credentials then request Meta SMS verification code',
+    summary:
+      'Register the phone on Cloud API and default appointment templates in Meta (sequential, idempotent)',
   })
-  requestIntegrationCode(@Req() req: Request): Promise<
-    GenericResponse<{
-      codeSent: boolean;
-      alreadyVerified?: boolean;
-    }>
-  > {
+  completeIntegrationSetup(
+    @Body() dto: CompleteIntegrationSetupDto,
+    @Req() req: Request,
+  ): Promise<GenericResponse<IntegrationSetupResultDto>> {
     const idBusiness = (req as any)['idBusiness'] as string;
-    return this.whatsAppService.requestIntegrationCode(idBusiness);
+    return this.whatsAppService.completeIntegrationSetup(
+      idBusiness,
+      dto.useSystemUserToken,
+    );
   }
 
-  @Post('integration/verify-register')
+  @Get('integration/business-profile')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({
-    summary: 'Verify SMS code and register phone number for Cloud API',
+    summary: 'Get WhatsApp Business profile for the connected phone number',
   })
-  verifyAndRegister(
-    @Body() dto: VerifyRegisterDto,
+  getBusinessProfile(
     @Req() req: Request,
-  ): Promise<GenericResponse<{ registered: boolean }>> {
+  ): Promise<GenericResponse<WhatsAppBusinessProfile>> {
     const idBusiness = (req as any)['idBusiness'] as string;
-    return this.whatsAppService.verifyAndRegisterPhone(idBusiness, dto.code);
+    return this.whatsAppService.getBusinessProfile(idBusiness);
+  }
+
+  @Put('integration/business-profile')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'Update WhatsApp Business profile for the connected phone number',
+  })
+  updateBusinessProfile(
+    @Body() dto: UpdateWhatsAppBusinessProfileDto,
+    @Req() req: Request,
+  ): Promise<GenericResponse<WhatsAppBusinessProfile>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.updateBusinessProfile(idBusiness, dto);
   }
 }
 

@@ -12,6 +12,7 @@ import {
 } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Express, json, urlencoded } from 'express';
+import { eventContext } from 'aws-serverless-express/middleware';
 
 import { AppModule } from './app/app.module';
 import { buildCorsOptions } from './cors.config';
@@ -30,6 +31,10 @@ async function bootstrap(
           AppModule,
           new ExpressAdapter(expressApp),
         );
+
+  if (expressApp) {
+    expressApp.use(eventContext());
+  }
 
   app.setGlobalPrefix('api');
   app.enableCors(buildCorsOptions());

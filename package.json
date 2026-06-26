@@ -21,9 +21,11 @@
     "deploy:all": "nest build && serverless deploy function -f api --stage qas && serverless deploy function -f api --stage prd",
     "deploy:qas:force": "nest build && serverless deploy --stage qas",
     "deploy:prd:force": "nest build && serverless deploy --stage prd",
-    "deploy:all:force": "nest build && serverless deploy --stage qas && serverless deploy --stage prd"
+"deploy:all:force": "nest build && serverless deploy --stage qas && serverless deploy --stage prd"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.750.0",
+    "@aws-sdk/util-dynamodb": "^3.750.0",
     "@nestjs/common": "^11.1.0",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.1.0",

@@ -51,11 +51,16 @@ export function convertVyvaBodyToMeta(
 export function validateMetaTemplateBody(metaBody: string): MetaTemplateValidation {
   const errors: string[] = [];
 
+  const trimmed = metaBody.trim();
+  if (!trimmed) {
+    errors.push('El mensaje no puede estar vacío.');
+    return { valid: false, errors };
+  }
+
   if (metaBody.length > 1024) {
     errors.push('El mensaje supera 1024 caracteres (límite de Meta).');
   }
 
-  const trimmed = metaBody.trim();
   if (/^\{\{\d+\}\}/.test(trimmed)) {
     errors.push('El mensaje no puede empezar con una variable.');
   }
@@ -66,7 +71,47 @@ export function validateMetaTemplateBody(metaBody: string): MetaTemplateValidati
     errors.push('No puede haber dos variables seguidas sin texto entre medio.');
   }
 
+  const numbers = [...metaBody.matchAll(/\{\{(\d+)\}\}/g)].map((m) =>
+    Number(m[1]),
+  );
+  for (let i = 0; i < numbers.length; i++) {
+    if (numbers[i] !== i + 1) {
+      errors.push('Las variables deben ser secuenciales ({{1}}, {{2}}, …).');
+      break;
+    }
+  }
+
+  if (/\{\{[^}\d][^}]*\}\}/.test(metaBody)) {
+    errors.push(
+      'El mensaje contiene variables con formato inválido. Usa las variables de Vyva (por ejemplo {{customerName}}).',
+    );
+  }
+
   return { valid: errors.length === 0, errors };
+}
+
+export function validateVyvaTemplateBody(body: string): MetaTemplateValidation {
+  const conversion = convertVyvaBodyToMeta(body);
+  return validateMetaTemplateBody(conversion.metaBody);
+}
+
+export function countMetaTemplateVariables(metaBody: string): number {
+  const matches = metaBody.match(/\{\{\d+\}\}/g) ?? [];
+  if (matches.length === 0) {
+    return 0;
+  }
+  return Math.max(...matches.map((match) => Number(match.replace(/\D/g, ''))));
+}
+
+export function normalizeMetaTemplateLanguage(language?: string): string {
+  const normalized = language?.trim().replace('_', '-') ?? '';
+  if (!normalized) {
+    return 'es';
+  }
+  if (/^[a-z]{2}(-[A-Za-z]{2})?$/.test(normalized)) {
+    return normalized;
+  }
+  return 'es';
 }
 
 export function sanitizeMetaTemplateName(name: string): string {
@@ -76,4 +121,24 @@ export function sanitizeMetaTemplateName(name: string): string {
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '')
     .slice(0, 512);
+}
+
+export function isValidMetaTemplateName(name: string): boolean {
+  const sanitized = sanitizeMetaTemplateName(name);
+  return sanitized.length > 0 && /^[a-z][a-z0-9_]*$/.test(sanitized);
+}
+
+/** Replaces Meta placeholders {{1}}, {{2}}, … with parameter values. */
+export function formatTemplateBody(
+  templateBody: string,
+  parameters: string[],
+): string {
+  let text = templateBody;
+  parameters.forEach((param, index) => {
+    text = text.replace(
+      new RegExp(`\\{\\{\\s*${index + 1}\\s*\\}\\}`, 'g'),
+      param ?? '',
+    );
+  });
+  return text;
 }

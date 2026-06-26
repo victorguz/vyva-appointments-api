@@ -5,6 +5,10 @@ import {
   isPlaceholderPhoneNumberId,
   isPlaceholderSecret,
 } from '../../shared/whatsapp-integration.util';
+import {
+  MetaEmbeddedSignupSnapshot,
+  redactMetaAccessTokenPayload,
+} from '../../shared/meta-embedded-signup.types';
 import { IntegrationsCredentialsService } from './integrations-credentials.service';
 
 /** Meta Graph API version used for outbound messages (Cloud API). */
@@ -42,6 +46,7 @@ export interface WhatsAppTokenDiagnostics {
   phoneNumberDisplay?: string;
   phoneNumberBelongsToWaba: boolean | null;
   resolvedWabaId?: string;
+  metaBusinessId?: string;
   issues: string[];
   hints: string[];
 }
@@ -51,15 +56,11 @@ interface MetaGraphResponse {
   error?: MetaGraphError;
 }
 
-export interface RequestVerificationCodeResult {
-  codeSent: boolean;
-  alreadyVerified?: boolean;
-}
-
 export interface WhatsAppTemplateSummary {
   name: string;
   language: string;
   category?: string;
+  status?: string;
   preview: string;
   bodyParameterCount: number;
 }
@@ -69,10 +70,60 @@ export interface WhatsAppTestPhoneNumber {
   phoneNumber: string;
 }
 
+export const WHATSAPP_BUSINESS_VERTICALS = [
+  'OTHER',
+  'AUTO',
+  'BEAUTY',
+  'APPAREL',
+  'EDU',
+  'ENTERTAIN',
+  'EVENT_PLAN',
+  'FINANCE',
+  'GROCERY',
+  'GOVT',
+  'HOTEL',
+  'HEALTH',
+  'NONPROFIT',
+  'PROF_SERVICES',
+  'RETAIL',
+  'TRAVEL',
+  'RESTAURANT',
+] as const;
+
+export type WhatsAppBusinessVertical =
+  (typeof WHATSAPP_BUSINESS_VERTICALS)[number];
+
+export interface WhatsAppBusinessProfile {
+  about?: string;
+  address?: string;
+  description?: string;
+  email?: string;
+  profilePictureUrl?: string;
+  websites?: string[];
+  vertical?: WhatsAppBusinessVertical | string;
+  verifiedName?: string;
+  newDisplayName?: string;
+  nameStatus?: string;
+  newNameStatus?: string;
+  displayNameEditable?: boolean;
+}
+
+export interface UpdateWhatsAppBusinessProfileInput {
+  about?: string;
+  address?: string;
+  description?: string;
+  email?: string;
+  websites?: string[];
+  vertical?: WhatsAppBusinessVertical | string;
+  profilePictureHandle?: string;
+  newDisplayName?: string;
+}
+
 export interface MetaOAuthConnectResult {
   accessToken: string;
   wabaId: string;
   phoneNumberId: string;
+  embeddedSignup: MetaEmbeddedSignupSnapshot;
 }
 
 interface MetaTemplateComponent {
@@ -219,28 +270,19 @@ export class WhatsAppMetaService {
    * Exchanges an OAuth authorization code from FB.login (Embedded Signup),
    * resolves WABA + Phone Number ID, and returns credentials to persist.
    */
-  async connectViaOAuthCode(
-    code: string,
-    redirectUri?: string,
-  ): Promise<MetaOAuthConnectResult> {
+  async connectViaOAuthCode(code: string): Promise<MetaOAuthConnectResult> {
     const { appId, appSecret } = this.getMetaAppCredentials();
-    const redirect =
-      redirectUri?.trim() ||
-      process.env.META_OAUTH_REDIRECT_URI?.trim() ||
-      process.env.FRONTEND_URL?.trim() ||
-      '';
-
-    const shortLived = await this.exchangeOAuthCode(
+    const oauthExchange = await this.exchangeEmbeddedSignupOAuthCode(
       code,
       appId,
       appSecret,
-      redirect,
     );
-    const accessToken = await this.exchangeLongLivedToken(
-      shortLived,
+    const longLivedExchange = await this.exchangeLongLivedToken(
+      oauthExchange.accessToken,
       appId,
       appSecret,
     );
+    const accessToken = longLivedExchange.accessToken;
 
     const credentials: WhatsAppIntegrationData = {
       phoneNumberId: 'pending',
@@ -248,8 +290,10 @@ export class WhatsAppMetaService {
       appSecret,
     };
 
-    const debug = await this.inspectAccessToken(credentials);
-    const wabaIds = this.extractWabaIdsFromDebug(debug);
+    const debug = await this.fetchAccessTokenDebugPayload(credentials);
+    const wabaIds = this.extractWabaIdsFromDebug(
+      (debug.data as MetaDebugTokenData | undefined) ?? {},
+    );
     if (!wabaIds.length) {
       throw new Error(
         'No se encontró una cuenta de WhatsApp Business (WABA) en el token de Meta. Verifica los permisos de la app.',
@@ -257,16 +301,76 @@ export class WhatsAppMetaService {
     }
 
     const wabaId = wabaIds[0];
-    const phoneNumberId = await this.findPrimaryPhoneNumberId(
+    const phoneListing = await this.listWabaPhoneNumbers(credentials, wabaId);
+    const phoneNumberId = phoneListing.phoneNumberId;
+
+    credentials.phoneNumberId = phoneNumberId;
+    const phoneNumberDetails = await this.fetchPhoneNumberDetails(
       credentials,
-      wabaId,
+      phoneNumberId,
     );
 
-    return { accessToken, wabaId, phoneNumberId };
+    // Subscribe our Meta app to this customer's WABA so its inbound messages and
+    // status updates are delivered to the shared app-level webhook. Without this
+    // the single Embedded Signup webhook never receives events for the business.
+    let appSubscribed = false;
+    let appSubscriptionError: string | undefined;
+    try {
+      await this.subscribeAppToWaba(credentials, wabaId);
+      appSubscribed = true;
+    } catch (err) {
+      appSubscriptionError =
+        err instanceof Error ? err.message : 'No se pudo suscribir la app a la WABA';
+      this.logger.warn(
+        `WABA ${wabaId} app subscription failed: ${appSubscriptionError}`,
+      );
+    }
+
+    const embeddedSignup: MetaEmbeddedSignupSnapshot = {
+      connectedAt: new Date().toISOString(),
+      oauthAccessTokenExchange: redactMetaAccessTokenPayload(
+        oauthExchange.rawResponse,
+      ),
+      longLivedTokenExchange: redactMetaAccessTokenPayload(
+        longLivedExchange.rawResponse,
+      ),
+      debugToken: debug,
+      wabaIds,
+      selectedWabaId: wabaId,
+      phoneNumbersListing: phoneListing.rawResponse,
+      selectedPhoneNumberId: phoneNumberId,
+      phoneNumberDetails,
+      appSubscribed,
+      appSubscriptionError,
+    };
+
+    return { accessToken, wabaId, phoneNumberId, embeddedSignup };
+  }
+
+  /**
+   * Subscribes our Meta app to a customer's WABA webhooks
+   * (POST /{waba-id}/subscribed_apps). Required for Embedded Signup so events
+   * for that business reach the single shared app-level webhook callback.
+   */
+  async subscribeAppToWaba(
+    credentials: WhatsAppIntegrationData,
+    wabaId: string,
+  ): Promise<void> {
+    const { ok, json } = await this.graphPostAbsolute<
+      MetaGraphResponse & { success?: boolean }
+    >(credentials, `${wabaId}/subscribed_apps`, {});
+
+    if (!ok || json.success === false) {
+      throw new Error(
+        json.error?.message ||
+          'No se pudo suscribir la app a la cuenta de WhatsApp Business (WABA).',
+      );
+    }
   }
 
   async listMessageTemplates(
     credentials: WhatsAppIntegrationData,
+    options?: { approvedOnly?: boolean },
   ): Promise<WhatsAppTemplateSummary[]> {
     const wabaId = await this.getWabaIdForBusiness(credentials);
     const { ok, json } = await this.graphGet<{
@@ -283,8 +387,10 @@ export class WhatsAppMetaService {
       );
     }
 
+    const approvedOnly = options?.approvedOnly !== false;
+
     return (json.data ?? [])
-      .filter((row) => row.status === 'APPROVED')
+      .filter((row) => !approvedOnly || row.status === 'APPROVED')
       .map((row) => this.mapMessageTemplate(row))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -305,7 +411,18 @@ export class WhatsAppMetaService {
       text: payload.bodyText,
     };
 
-    if (payload.bodyExamples.length) {
+    const variableCount = (payload.bodyText.match(/\{\{\d+\}\}/g) ?? []).length
+      ? Math.max(
+          ...(payload.bodyText.match(/\{\{\d+\}\}/g) ?? []).map((match) =>
+            Number(match.replace(/\D/g, '')),
+          ),
+        )
+      : 0;
+
+    if (variableCount > 0) {
+      if (payload.bodyExamples.length !== variableCount) {
+        throw new Error('MS014');
+      }
       bodyComponent.example = { body_text: [payload.bodyExamples] };
     }
 
@@ -406,57 +523,32 @@ export class WhatsAppMetaService {
     return { metaMessageId };
   }
 
-  /** Requests Meta to send an SMS verification code to the business phone number. */
-  async requestVerificationCode(
-    credentials: WhatsAppIntegrationData,
-  ): Promise<RequestVerificationCodeResult> {
-    const { ok, json } = await this.graphPost(credentials, 'request_code', {
-      query: { code_method: 'SMS', language: 'es' },
-    });
-
-    if (ok) {
-      return { codeSent: true };
-    }
-
-    if (json.error?.code === 136024) {
-      return { codeSent: false, alreadyVerified: true };
-    }
-
-    throw new Error(
-      json.error?.message || 'No se pudo solicitar el código de verificación',
-    );
-  }
-
-  /** Verifies the SMS code. Returns false when the number was already verified. */
-  async verifyCode(
-    credentials: WhatsAppIntegrationData,
-    code: string,
-  ): Promise<boolean> {
-    const { ok, json } = await this.graphPost(credentials, 'verify_code', {
-      query: { code },
-    });
-
-    if (ok) {
-      return true;
-    }
-
-    if (json.error?.code === 136024) {
-      return false;
-    }
-
-    throw new Error(json.error?.message || 'Código de verificación inválido');
-  }
-
-  /** Registers the phone number for Cloud API messaging (fixes error 133010). */
+  /**
+   * Registers the phone number for Cloud API messaging (fixes error 133010).
+   *
+   * The `pin` is the two-step verification PIN. For numbers onboarded through
+   * Embedded Signup the number is already verified by Meta, so registration only
+   * requires setting/sending this PIN — there is no SMS code involved.
+   */
   async registerPhoneNumber(
     credentials: WhatsAppIntegrationData,
     pin: string,
+    useSystemUserToken = false,
   ): Promise<void> {
+    const normalizedPin = pin?.trim();
+    if (!normalizedPin) {
+      throw new Error('Se requiere un PIN de 6 dígitos para registrar el número.');
+    }
+
     const { ok, json } = await this.graphPost(credentials, 'register', {
       body: {
         messaging_product: 'whatsapp',
-        pin,
+        pin: normalizedPin,
       },
+      accessToken: this.resolveAccessTokenForPhoneRegistration(
+        credentials,
+        useSystemUserToken,
+      ),
     });
 
     if (!ok) {
@@ -675,6 +767,15 @@ export class WhatsAppMetaService {
       );
     }
 
+    const wabaForBusinessLookup = resolvedWabaId ?? wabaIdsFromManagement[0];
+    let metaBusinessId: string | undefined;
+    if (wabaForBusinessLookup && credentials.accessToken?.trim()) {
+      metaBusinessId = await this.getMetaBusinessIdForWaba(
+        credentials,
+        wabaForBusinessLookup,
+      );
+    }
+
     return {
       phoneNumberIdConfigured,
       tokenValid: debug.is_valid !== false,
@@ -688,6 +789,7 @@ export class WhatsAppMetaService {
       phoneNumberDisplay,
       phoneNumberBelongsToWaba,
       resolvedWabaId,
+      metaBusinessId,
       issues,
       hints,
     };
@@ -695,33 +797,44 @@ export class WhatsAppMetaService {
 
   /**
    * Meta debug_token requires an app access token (or app admin user token) as bearer.
-   * We first read app_id from the token, then re-inspect with `{app_id}|{app_secret}`.
+   * Business tokens from Embedded Signup cannot inspect themselves; use `{app_id}|{app_secret}`.
    */
   private async inspectAccessToken(
     credentials: WhatsAppIntegrationData,
   ): Promise<MetaDebugTokenData> {
     const inputToken = credentials.accessToken.trim();
-    const initial = await this.fetchDebugToken(inputToken, inputToken);
-    if (!initial.ok) {
-      throw new Error(
-        initial.json.error?.message ||
-          'No se pudo validar el token para obtener la cuenta WABA',
+    const appId = process.env.META_APP_ID?.trim();
+    const appSecret =
+      credentials.appSecret?.trim() || process.env.META_APP_SECRET?.trim();
+
+    if (appId && appSecret) {
+      const appAccessToken = `${appId}|${appSecret}`;
+      const withAppToken = await this.fetchDebugToken(
+        appAccessToken,
+        inputToken,
       );
+      if (withAppToken.ok && withAppToken.json.data) {
+        return withAppToken.json.data;
+      }
+
+      const appTokenError = withAppToken.json.error?.message;
+      if (appTokenError) {
+        this.logger.warn(
+          `debug_token with app access token failed: ${appTokenError}`,
+        );
+        throw new Error(appTokenError);
+      }
     }
 
-    const appId = initial.json.data?.app_id;
-    const appSecret = credentials.appSecret?.trim();
-    if (!appId || !appSecret) {
-      return initial.json.data ?? {};
+    const initial = await this.fetchDebugToken(inputToken, inputToken);
+    if (initial.ok && initial.json.data) {
+      return initial.json.data;
     }
 
-    const appAccessToken = `${appId}|${appSecret}`;
-    const refined = await this.fetchDebugToken(appAccessToken, inputToken);
-    if (refined.ok && refined.json.data) {
-      return refined.json.data;
-    }
-
-    return initial.json.data ?? {};
+    throw new Error(
+      initial.json.error?.message ||
+        'No se pudo validar el token para obtener la cuenta WABA',
+    );
   }
 
   private async fetchDebugToken(
@@ -774,43 +887,104 @@ export class WhatsAppMetaService {
     return { appId, appSecret };
   }
 
+  private async exchangeEmbeddedSignupOAuthCode(
+    code: string,
+    appId: string,
+    appSecret: string,
+  ): Promise<{ accessToken: string; rawResponse: Record<string, unknown> }> {
+    this.logger.log(
+      'Meta Embedded Signup: exchanging authorization code without redirect_uri',
+    );
+
+    try {
+      return await this.exchangeOAuthCode(code, appId, appSecret);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Meta Embedded Signup code exchange failed: ${message}`,
+      );
+      throw err;
+    }
+  }
+
   private async exchangeOAuthCode(
     code: string,
     appId: string,
     appSecret: string,
-    redirectUri: string,
-  ): Promise<string> {
+    redirectUri?: string,
+  ): Promise<{ accessToken: string; rawResponse: Record<string, unknown> }> {
     const base = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/oauth/access_token`;
     const params = new URLSearchParams({
       client_id: appId,
       client_secret: appSecret,
       code: code.trim(),
     });
-    if (redirectUri) {
-      params.set('redirect_uri', redirectUri);
+    const normalizedRedirect = this.normalizeRedirectUri(redirectUri);
+    if (normalizedRedirect) {
+      params.set('redirect_uri', normalizedRedirect);
+      this.logger.log(
+        `Meta OAuth code exchange using redirect_uri=${normalizedRedirect}`,
+      );
     }
 
     const res = await fetch(`${base}?${params.toString()}`);
     const json = (await res.json()) as {
       access_token?: string;
-      error?: MetaGraphError;
+      error?: MetaGraphError & { error_subcode?: number; fbtrace_id?: string };
     };
 
     if (!res.ok || !json.access_token) {
+      const metaError = json.error;
+      if (metaError) {
+        this.logger.error(
+          `Meta OAuth token exchange error: ${JSON.stringify(metaError)}`,
+        );
+      }
       throw new Error(
-        json.error?.message ||
-          'No se pudo intercambiar el código de autorización de Meta.',
+        this.formatOAuthExchangeError(metaError?.message, normalizedRedirect),
       );
     }
 
-    return json.access_token;
+    return {
+      accessToken: json.access_token,
+      rawResponse: json as unknown as Record<string, unknown>,
+    };
+  }
+
+  private formatOAuthExchangeError(
+    metaMessage?: string,
+    redirectUri?: string,
+  ): string {
+    const base =
+      metaMessage?.trim() ||
+      'No se pudo intercambiar el código de autorización de Meta.';
+
+    if (/verification code|redirect_uri/i.test(base)) {
+      return (
+        `${base} ` +
+        'Para Embedded Signup el intercambio debe hacerse sin redirect_uri y el código ' +
+        'caduca en ~30 s y solo sirve una vez. Completa el flujo en Meta y pulsa Comenzar de nuevo ' +
+        'sin reutilizar el mismo código ni probarlo manualmente en Postman.' +
+        (redirectUri ? ` (redirect_uri enviado: ${redirectUri})` : '')
+      );
+    }
+
+    return base;
+  }
+
+  private normalizeRedirectUri(value?: string): string | undefined {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    return trimmed.replace(/\/$/, '');
   }
 
   private async exchangeLongLivedToken(
     shortLivedToken: string,
     appId: string,
     appSecret: string,
-  ): Promise<string> {
+  ): Promise<{ accessToken: string; rawResponse: Record<string, unknown> }> {
     const base = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/oauth/access_token`;
     const params = new URLSearchParams({
       grant_type: 'fb_exchange_token',
@@ -826,10 +1000,92 @@ export class WhatsAppMetaService {
     };
 
     if (!res.ok || !json.access_token) {
-      return shortLivedToken;
+      return {
+        accessToken: shortLivedToken,
+        rawResponse: json as unknown as Record<string, unknown>,
+      };
     }
 
-    return json.access_token;
+    return {
+      accessToken: json.access_token,
+      rawResponse: json as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async listWabaPhoneNumbers(
+    credentials: WhatsAppIntegrationData,
+    wabaId: string,
+  ): Promise<{ phoneNumberId: string; rawResponse: Record<string, unknown> }> {
+    const { ok, json } = await this.graphGet<{
+      data?: { id?: string }[];
+      error?: MetaGraphError;
+    }>(credentials, `${wabaId}/phone_numbers`, {
+      fields: 'id,display_phone_number,verified_name,code_verification_status',
+      limit: '25',
+    });
+
+    if (!ok) {
+      throw new Error(
+        json.error?.message ||
+          'No se pudieron listar los números de teléfono de la cuenta WABA.',
+      );
+    }
+
+    const phoneNumberId = json.data?.[0]?.id?.trim();
+    if (!phoneNumberId) {
+      throw new Error(
+        'La cuenta de WhatsApp Business no tiene números de teléfono asociados.',
+      );
+    }
+
+    return {
+      phoneNumberId,
+      rawResponse: json as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async fetchPhoneNumberDetails(
+    credentials: WhatsAppIntegrationData,
+    phoneNumberId: string,
+  ): Promise<Record<string, unknown>> {
+    const { ok, json } = await this.graphGet<
+      Record<string, unknown> & {
+        error?: MetaGraphError;
+      }
+    >(credentials, phoneNumberId, {
+      fields:
+        'display_phone_number,verified_name,code_verification_status,quality_rating,messaging_limit_tier,status',
+    });
+
+    if (!ok) {
+      return {
+        error: json.error,
+        response: json,
+      };
+    }
+
+    return json as Record<string, unknown>;
+  }
+
+  private async fetchAccessTokenDebugPayload(
+    credentials: WhatsAppIntegrationData,
+  ): Promise<Record<string, unknown>> {
+    const inputToken = credentials.accessToken.trim();
+    const appId = process.env.META_APP_ID?.trim();
+    const appSecret =
+      credentials.appSecret?.trim() || process.env.META_APP_SECRET?.trim();
+
+    if (appId && appSecret) {
+      const appAccessToken = `${appId}|${appSecret}`;
+      const withAppToken = await this.fetchDebugToken(
+        appAccessToken,
+        inputToken,
+      );
+      return withAppToken.json as unknown as Record<string, unknown>;
+    }
+
+    const initial = await this.fetchDebugToken(inputToken, inputToken);
+    return initial.json as unknown as Record<string, unknown>;
   }
 
   private async findPrimaryPhoneNumberId(
@@ -859,6 +1115,24 @@ export class WhatsAppMetaService {
     }
 
     return phoneNumberId;
+  }
+
+  private async getMetaBusinessIdForWaba(
+    credentials: WhatsAppIntegrationData,
+    wabaId: string,
+  ): Promise<string | undefined> {
+    const { ok, json } = await this.graphGet<{
+      owner_business_info?: { id?: string };
+      error?: MetaGraphError;
+    }>(credentials, wabaId, {
+      fields: 'owner_business_info',
+    });
+
+    if (!ok) {
+      return undefined;
+    }
+
+    return json.owner_business_info?.id?.trim() || undefined;
   }
 
   private async wabaOwnsPhoneNumber(
@@ -892,24 +1166,282 @@ export class WhatsAppMetaService {
       name: row.name,
       language: row.language,
       category: row.category,
+      status: row.status,
       preview,
       bodyParameterCount,
     };
   }
 
+  /**
+   * Phone registration APIs use META_SYSTEM_USER_ACCESS_TOKEN only when
+   * useSystemUserToken is true; otherwise the client OAuth token is used.
+   */
+  private resolveAccessTokenForPhoneRegistration(
+    credentials: WhatsAppIntegrationData,
+    useSystemUserToken = false,
+  ): string {
+    if (useSystemUserToken) {
+      const systemUserToken = process.env.META_SYSTEM_USER_ACCESS_TOKEN?.trim();
+      if (!systemUserToken) {
+        throw new Error(
+          'META_SYSTEM_USER_ACCESS_TOKEN no está configurado en el servidor.',
+        );
+      }
+      return systemUserToken;
+    }
+
+    return credentials.accessToken.trim();
+  }
+
+  async getFullBusinessProfile(
+    credentials: WhatsAppIntegrationData,
+  ): Promise<WhatsAppBusinessProfile> {
+    const [profile, displayName] = await Promise.all([
+      this.getBusinessProfile(credentials),
+      this.getPhoneNumberDisplayName(credentials),
+    ]);
+    return { ...profile, ...displayName };
+  }
+
+  async getPhoneNumberDisplayName(
+    credentials: WhatsAppIntegrationData,
+  ): Promise<
+    Pick<
+      WhatsAppBusinessProfile,
+      | 'verifiedName'
+      | 'newDisplayName'
+      | 'nameStatus'
+      | 'newNameStatus'
+      | 'displayNameEditable'
+    >
+  > {
+    const { ok, json } = await this.graphGet<
+      MetaGraphResponse & {
+        verified_name?: string;
+        new_display_name?: string;
+        name_status?: string;
+        new_name_status?: string;
+      }
+    >(credentials, credentials.phoneNumberId, {
+      fields: 'verified_name,new_display_name,name_status,new_name_status',
+    });
+
+    if (!ok) {
+      throw new Error(
+        json.error?.message ??
+          'No se pudo obtener el nombre visible de WhatsApp.',
+      );
+    }
+
+    const pendingStatuses = new Set(['PENDING', 'PENDING_REVIEW']);
+    const nameStatus = json.name_status?.trim() || undefined;
+    const newNameStatus = json.new_name_status?.trim() || undefined;
+    const displayNameEditable =
+      !pendingStatuses.has(nameStatus ?? '') &&
+      !pendingStatuses.has(newNameStatus ?? '');
+
+    return {
+      verifiedName: json.verified_name?.trim() || undefined,
+      newDisplayName: json.new_display_name?.trim() || undefined,
+      nameStatus,
+      newNameStatus,
+      displayNameEditable,
+    };
+  }
+
+  async updatePhoneNumberDisplayName(
+    credentials: WhatsAppIntegrationData,
+    newDisplayName: string,
+  ): Promise<void> {
+    const trimmed = newDisplayName.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const { ok, json } = await this.graphPostAbsolute<MetaGraphResponse>(
+      credentials,
+      credentials.phoneNumberId,
+      { new_display_name: trimmed },
+    );
+
+    if (!ok) {
+      throw new Error(
+        json.error?.message ??
+          'No se pudo solicitar el cambio de nombre visible en WhatsApp.',
+      );
+    }
+  }
+
+  async uploadProfilePictureHandle(
+    credentials: WhatsAppIntegrationData,
+    fileBuffer: Buffer,
+    mimeType: string,
+    fileName: string,
+  ): Promise<string> {
+    const { appId } = this.getMetaAppCredentials();
+    const accessToken = credentials.accessToken.trim();
+    const normalizedMime =
+      mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
+    const allowed = new Set(['image/jpeg', 'image/png']);
+    if (!allowed.has(normalizedMime)) {
+      throw new Error(
+        'Formato de imagen no soportado. Usa JPEG o PNG para el perfil de WhatsApp.',
+      );
+    }
+
+    const sessionParams = new URLSearchParams({
+      file_name: fileName,
+      file_length: String(fileBuffer.length),
+      file_type: normalizedMime,
+    });
+    const sessionUrl = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${appId}/uploads?${sessionParams.toString()}`;
+    const sessionRes = await fetch(sessionUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const sessionJson = (await sessionRes.json()) as MetaGraphResponse & {
+      id?: string;
+    };
+    if (!sessionRes.ok || !sessionJson.id?.trim()) {
+      throw new Error(
+        sessionJson.error?.message ??
+          'No se pudo iniciar la subida de la foto de perfil en Meta.',
+      );
+    }
+
+    const uploadRes = await fetch(
+      `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${sessionJson.id.trim()}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `OAuth ${accessToken}`,
+          file_offset: '0',
+          'Content-Type': 'application/octet-stream',
+        },
+        body: fileBuffer,
+      },
+    );
+    const uploadJson = (await uploadRes.json()) as MetaGraphResponse & {
+      h?: string;
+    };
+    if (!uploadRes.ok || !uploadJson.h?.trim()) {
+      throw new Error(
+        uploadJson.error?.message ??
+          'No se pudo subir la foto de perfil a Meta.',
+      );
+    }
+
+    return uploadJson.h.trim();
+  }
+
+  async getBusinessProfile(
+    credentials: WhatsAppIntegrationData,
+  ): Promise<WhatsAppBusinessProfile> {
+    const fields =
+      'about,address,description,email,profile_picture_url,websites,vertical';
+    const { ok, json } = await this.graphGet<
+      MetaGraphResponse & {
+        data?: Array<{
+          about?: string;
+          address?: string;
+          description?: string;
+          email?: string;
+          profile_picture_url?: string;
+          websites?: string[];
+          vertical?: string;
+        }>;
+      }
+    >(
+      credentials,
+      `${credentials.phoneNumberId}/whatsapp_business_profile`,
+      { fields },
+    );
+
+    if (!ok) {
+      throw new Error(
+        json.error?.message ??
+          'No se pudo obtener el perfil de WhatsApp Business.',
+      );
+    }
+
+    const row = json.data?.[0];
+    if (!row) {
+      return {};
+    }
+
+    return {
+      about: row.about?.trim() || undefined,
+      address: row.address?.trim() || undefined,
+      description: row.description?.trim() || undefined,
+      email: row.email?.trim() || undefined,
+      profilePictureUrl: row.profile_picture_url?.trim() || undefined,
+      websites: (row.websites ?? []).filter(Boolean),
+      vertical: row.vertical?.trim() || undefined,
+    };
+  }
+
+  async updateBusinessProfile(
+    credentials: WhatsAppIntegrationData,
+    input: UpdateWhatsAppBusinessProfileInput,
+  ): Promise<void> {
+    const body: Record<string, unknown> = {
+      messaging_product: 'whatsapp',
+    };
+
+    if (input.about !== undefined) {
+      body.about = input.about.trim();
+    }
+    if (input.address !== undefined) {
+      body.address = input.address.trim();
+    }
+    if (input.description !== undefined) {
+      body.description = input.description.trim();
+    }
+    if (input.email !== undefined) {
+      body.email = input.email.trim();
+    }
+    if (input.vertical !== undefined) {
+      body.vertical = input.vertical.trim();
+    }
+    if (input.websites !== undefined) {
+      body.websites = input.websites
+        .map((url) => url.trim())
+        .filter(Boolean)
+        .slice(0, 2);
+    }
+    if (input.profilePictureHandle?.trim()) {
+      body.profile_picture_handle = input.profilePictureHandle.trim();
+    }
+
+    const { ok, json } = await this.graphPost(credentials, 'whatsapp_business_profile', {
+      body,
+    });
+
+    if (!ok) {
+      throw new Error(
+        json.error?.message ??
+          'No se pudo actualizar el perfil de WhatsApp Business.',
+      );
+    }
+  }
+
   private async graphGet<T extends MetaGraphResponse>(
     credentials: WhatsAppIntegrationData,
     resourcePath: string,
-    query?: Record<string, string>,
+    query?: Record<string, string> & { accessToken?: string },
   ): Promise<{ ok: boolean; json: T }> {
+    const { accessToken, ...queryParams } = query ?? {};
     const base = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}`;
-    const qs = query ? `?${new URLSearchParams(query).toString()}` : '';
+    const qs = Object.keys(queryParams).length
+      ? `?${new URLSearchParams(queryParams).toString()}`
+      : '';
     const url = `${base}/${resourcePath}${qs}`;
+    const bearerToken = accessToken?.trim() || credentials.accessToken.trim();
 
     const res = await fetch(url, {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${credentials.accessToken}`,
+        Authorization: `Bearer ${bearerToken}`,
       },
     });
 
@@ -943,6 +1475,7 @@ export class WhatsAppMetaService {
     options?: {
       query?: Record<string, string>;
       body?: Record<string, unknown>;
+      accessToken?: string;
     },
   ): Promise<{ ok: boolean; json: MetaGraphResponse }> {
     const base = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${credentials.phoneNumberId}`;
@@ -950,11 +1483,13 @@ export class WhatsAppMetaService {
       ? `?${new URLSearchParams(options.query).toString()}`
       : '';
     const url = `${base}/${resourcePath}${qs}`;
+    const bearerToken =
+      options?.accessToken?.trim() || credentials.accessToken.trim();
 
     const res = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${credentials.accessToken}`,
+        Authorization: `Bearer ${bearerToken}`,
         'Content-Type': 'application/json',
       },
       body: options?.body ? JSON.stringify(options.body) : undefined,

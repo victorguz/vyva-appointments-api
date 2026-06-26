@@ -9,8 +9,10 @@ import { DomainSchema } from '../../schemas/domain.schema';
 import { UserSchema } from '../../schemas/user.schema';
 import { WhatsAppController } from './whatsapp.controller';
 import { WhatsAppService } from './whatsapp.service';
+import { CampaignBatchService } from './campaign-batch.service';
 import { IntegrationsCredentialsService } from './integrations-credentials.service';
 import { WhatsAppMetaService } from './whatsapp-meta.service';
+import { RealtimePublisherService } from './realtime-publisher.service';
 
 const whatsappDataTableOptions = {
   prefix: WHATSAPP_DATA_TABLE_PREFIX,
@@ -56,8 +58,10 @@ const whatsappDataTableOptions = {
   controllers: [WhatsAppController],
   providers: [
     WhatsAppService,
+    CampaignBatchService,
     IntegrationsCredentialsService,
     WhatsAppMetaService,
+    RealtimePublisherService,
   ],
 })
 export class WhatsAppModule {}
