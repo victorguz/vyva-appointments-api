@@ -63,6 +63,7 @@ export interface WhatsAppMessageConfig {
 }
 
 export interface MetaTemplateSyncSource {
+  id?: string;
   name: string;
   language: string;
   category?: string;

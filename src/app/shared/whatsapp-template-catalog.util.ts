@@ -496,7 +496,7 @@ export function applyTemplateMetaStateFromMeta(
       existingMeta?.category ??
       'UTILITY',
     status: normalizeMetaStatus(metaTemplate.status) ?? existingMeta?.status,
-    metaTemplateId: existingMeta?.metaTemplateId,
+    metaTemplateId: metaTemplate.id ?? existingMeta?.metaTemplateId,
     lastRegisteredAt: existingMeta?.lastRegisteredAt,
     lastError: existingMeta?.lastError,
   };

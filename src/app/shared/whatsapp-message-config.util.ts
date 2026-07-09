@@ -238,10 +238,37 @@ function buildMetaStateFromTemplate(
     language: metaTemplate.language,
     category,
     status: normalizeMetaStatus(metaTemplate.status) ?? existing?.status,
-    metaTemplateId: existing?.metaTemplateId,
+    metaTemplateId: metaTemplate.id ?? existing?.metaTemplateId,
     lastRegisteredAt: existing?.lastRegisteredAt,
     lastError: existing?.lastError,
   };
+}
+
+/** Prefer APPROVED, then PENDING. Never reuse REJECTED templates. */
+export function findReusableMetaTemplate(
+  metaTemplates: MetaTemplateSyncSource[],
+  candidates: Array<string | undefined | null>,
+  preferredLanguage: string,
+  options?: { prefixBases?: Array<string | undefined | null> },
+): MetaTemplateSyncSource | undefined {
+  const match = findMetaTemplateByCandidates(
+    metaTemplates,
+    candidates,
+    preferredLanguage,
+    options,
+  );
+  if (!match) {
+    return undefined;
+  }
+  const status = normalizeMetaStatus(match.status);
+  if (status === 'REJECTED') {
+    return undefined;
+  }
+  if (status === 'APPROVED' || status === 'PENDING' || status === 'PAUSED') {
+    return match;
+  }
+  // Unknown/missing status: still treat as reusable if Meta returned the template.
+  return match;
 }
 
 /** When a Meta template shares the same name as a local one, Meta body/status win. */

@@ -58,6 +58,7 @@ interface MetaGraphResponse {
 }
 
 export interface WhatsAppTemplateSummary {
+  id?: string;
   name: string;
   language: string;
   category?: string;
@@ -143,6 +144,7 @@ interface MetaTemplateComponent {
 }
 
 interface MetaMessageTemplate {
+  id?: string;
   name: string;
   status: string;
   language: string;
@@ -401,7 +403,7 @@ export class WhatsAppMetaService {
       data?: MetaMessageTemplate[];
       error?: MetaGraphError;
     }>(credentials, `${wabaId}/message_templates`, {
-      fields: 'name,status,language,category,components',
+      fields: 'id,name,status,language,category,components',
       limit: '100',
     });
 
@@ -1211,6 +1213,7 @@ export class WhatsAppMetaService {
     const bodyParameterCount = (preview.match(/\{\{\d+\}\}/g) ?? []).length;
 
     return {
+      id: row.id ? String(row.id) : undefined,
       name: row.name,
       language: row.language,
       category: row.category,

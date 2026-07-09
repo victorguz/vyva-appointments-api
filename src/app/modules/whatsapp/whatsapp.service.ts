@@ -67,6 +67,7 @@ import {
 import {
   DEFAULT_WHATSAPP_MESSAGE_CONFIG,
   APPOINTMENT_TEMPLATE_KEYS,
+  findReusableMetaTemplate,
   normalizeWhatsAppMessageConfig,
   syncWhatsAppConfigFromMeta,
   syncWhatsAppMetaStateFromMeta,
@@ -1667,25 +1668,46 @@ export class WhatsAppService {
         );
       }
 
-      const metaTemplatesForCleanup =
+      const metaTemplatesForLookup =
         (await this.fetchMetaTemplatesForEnrichment(idBusiness)) ?? [];
-      const namesToDelete = collectRelatedMetaTemplateNames(
-        metaName,
-        metaTemplatesForCleanup,
+      const reusable = findReusableMetaTemplate(
+        metaTemplatesForLookup,
         [storedMetaName, metaName],
+        language,
+        { prefixBases: [metaName, storedMetaName] },
       );
 
-      const result = await this.registerSingleTemplate(creds!, wabaId, {
-        key,
-        name: metaName,
-        language,
-        category: metaCategory,
-        body: dto.body.trim(),
-        header: dto.header,
-        footer: dto.footer,
-        buttons: dto.buttons,
-        namesToDelete,
-      });
+      let result: TemplateRegistrationResultDto;
+      if (reusable && reusable.status !== 'REJECTED') {
+        result = {
+          key,
+          name: reusable.name,
+          success: true,
+          status: reusable.status,
+          metaTemplateId: reusable.id,
+        };
+        this.logger.log(
+          `Reusing existing Meta template "${reusable.name}" (${reusable.status}) for ${key}`,
+        );
+      } else {
+        const namesToDelete = collectRelatedMetaTemplateNames(
+          metaName,
+          metaTemplatesForLookup,
+          [storedMetaName, metaName],
+        );
+
+        result = await this.registerSingleTemplate(creds!, wabaId, {
+          key,
+          name: metaName,
+          language,
+          category: metaCategory,
+          body: dto.body.trim(),
+          header: dto.header,
+          footer: dto.footer,
+          buttons: dto.buttons,
+          namesToDelete,
+        });
+      }
 
       config = applyRegistrationResultToConfig(
         config,
@@ -1988,29 +2010,14 @@ export class WhatsAppService {
     const { custom } = resolveTemplateKind(loaded, key);
     const storedMetaName = custom?.meta?.name;
     const canonicalMetaName = definition.metaName;
-    const existingMetaTemplate = findMetaTemplateByName(
+    const existingMetaTemplate = findReusableMetaTemplate(
       metaTemplates,
-      storedMetaName || canonicalMetaName,
+      [storedMetaName, canonicalMetaName],
       language,
+      { prefixBases: [canonicalMetaName, storedMetaName] },
     );
-    const needsRegistration =
-      templateRequiresMetaRegistration(loaded, key, {
-        body: definition.body,
-        header: definition.header,
-        footer: definition.footer,
-        buttons: definition.buttons,
-        metaCategory: 'UTILITY',
-      }) || existingMetaTemplate?.status === 'REJECTED';
 
-    if (
-      !needsRegistration &&
-      existingMetaTemplate &&
-      (existingMetaTemplate.status === 'APPROVED' ||
-        existingMetaTemplate.status === 'PENDING')
-    ) {
-      return null;
-    }
-
+    // Persist local definition, then link an existing Meta template when possible.
     let config = applyTemplateSaveToConfig(loaded, key, {
       body: definition.body,
       header: definition.header,
@@ -2018,9 +2025,44 @@ export class WhatsAppService {
       buttons: definition.buttons,
       title: definition.title,
       description: definition.description,
-      metaCategory: 'UTILITY',
+      metaCategory:
+        (existingMetaTemplate?.category as 'UTILITY' | 'MARKETING') ??
+        'UTILITY',
       metaLanguage: loaded.metaLanguage ?? 'es',
     });
+
+    if (
+      existingMetaTemplate &&
+      (existingMetaTemplate.status === 'APPROVED' ||
+        existingMetaTemplate.status === 'PENDING')
+    ) {
+      const category =
+        (existingMetaTemplate.category as 'UTILITY' | 'MARKETING') ?? 'UTILITY';
+      config = applyRegistrationResultToConfig(
+        config,
+        key,
+        {
+          name: existingMetaTemplate.name,
+          success: true,
+          status: existingMetaTemplate.status,
+          metaTemplateId: existingMetaTemplate.id,
+        },
+        category,
+        existingMetaTemplate.language || language,
+      );
+      await this.saveMessageConfigDomain(idBusiness, config, domainId);
+      this.logger.log(
+        `Reusing existing Meta notification template "${existingMetaTemplate.name}" for ${key}`,
+      );
+      return {
+        key,
+        name: existingMetaTemplate.name,
+        success: true,
+        status: existingMetaTemplate.status,
+        metaTemplateId: existingMetaTemplate.id,
+      };
+    }
+
     config.customTemplates = (config.customTemplates ?? []).map((item) =>
       item.key === key
         ? {
@@ -2044,6 +2086,7 @@ export class WhatsAppService {
     const wabaId = await this.metaService.getWabaIdForBusiness(creds!);
     const body = getTemplateDomainBody(config, key) || definition.body;
     const layout = getTemplateLayout(config, key);
+    // Only delete rejected/related names when we actually need to create.
     const namesToDelete = collectRelatedMetaTemplateNames(
       canonicalMetaName,
       metaTemplates,
