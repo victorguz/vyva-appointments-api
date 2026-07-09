@@ -1,7 +1,4 @@
 import { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
-import { config as loadEnv } from 'dotenv';
-
-loadEnv();
 
 const DEFAULT_ORIGINS = '*';
 const DEFAULT_METHODS = 'GET,POST,PUT,PATCH,DELETE,OPTIONS';

@@ -19,6 +19,11 @@ import {
   serializeGoogleCalendarEventIds,
 } from '../../shared/google-calendar-event-ids.storage';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
+import { RemindersService } from '../reminders/reminders.service';
+import {
+  RealtimeAppointmentAction,
+  RealtimePublisherService,
+} from '../shared/realtime-publisher.service';
 import {
   CreateAppointmentDto,
   ListAppointmentDto,
@@ -30,6 +35,8 @@ import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
 export class AppointmentsService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
+    private readonly realtimePublisher: RealtimePublisherService,
+    private readonly remindersService: RemindersService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
     @InjectModel('Customer')
@@ -212,6 +219,16 @@ export class AppointmentsService extends TransactionSupport {
       );
 
       const parentWithSync = await this.model.get({ id: parentPayload.id });
+      const parentData = parentWithSync.toJSON() as Appointment;
+      this.notifyAppointmentChange('created', parentData);
+      await Promise.all(
+        allPayloads.map(async (payload) => {
+          const saved = await this.model.get({ id: payload.id });
+          const appointmentData = saved.toJSON() as Appointment;
+          await this.remindersService.sendBookingNotification(appointmentData);
+          await this.remindersService.ensureAppointment(appointmentData);
+        }),
+      );
       return syncResult.synced
         ? new GenericResponse(parentWithSync)
         : new GenericResponse(
@@ -372,6 +389,8 @@ export class AppointmentsService extends TransactionSupport {
         false, // createTimeOut never sends customer calendar events
       );
       const appointmentWithSync = await this.model.get({ id: appointment.id });
+      const timeoutData = appointmentWithSync.toJSON() as Appointment;
+      this.notifyAppointmentChange('created', timeoutData);
       return syncResult.synced
         ? new GenericResponse(appointmentWithSync)
         : new GenericResponse(
@@ -580,6 +599,9 @@ export class AppointmentsService extends TransactionSupport {
         sendGoogleCalendar,
       );
       const appointmentWithSync = await this.model.get({ id: appointment.id });
+      const updatedData = appointmentWithSync.toJSON() as Appointment;
+      this.notifyAppointmentChange('updated', updatedData);
+      await this.remindersService.ensureAppointment(updatedData);
       return syncResult.synced
         ? new GenericResponse(appointmentWithSync)
         : new GenericResponse(
@@ -653,6 +675,8 @@ export class AppointmentsService extends TransactionSupport {
         sendGoogleCalendar,
       );
 
+      this.notifyAppointmentChange('updated', appointmentData);
+      await this.remindersService.ensureAppointment(appointmentData);
       return new GenericResponse(appointmentData);
     } catch (error) {
       throw error;
@@ -666,11 +690,33 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('id is required and cannot be undefined or null');
       }
 
+      const existing = await this.model.get({ id });
+      if (existing) await this.remindersService.ensureAppointment(existing.toJSON() as Appointment, { deleted: true });
       await this.model.delete({ id });
+      if (existing?.idBusiness) {
+        this.notifyAppointmentChange('deleted', existing.toJSON() as Appointment);
+      }
       return new GenericResponse(true);
     } catch (error) {
       throw error;
     }
+  }
+
+  private notifyAppointmentChange(
+    action: RealtimeAppointmentAction,
+    appointment: Appointment,
+  ): void {
+    if (!appointment.idBusiness) {
+      return;
+    }
+
+    void this.realtimePublisher.publishAppointmentChange({
+      idBusiness: appointment.idBusiness,
+      action,
+      appointmentId: appointment.id,
+      startDate: new Date(appointment.startDate).toISOString(),
+      endDate: new Date(appointment.endDate).toISOString(),
+    });
   }
 
   private validateAppointmentDates(startDate: string, endDate: string): void {

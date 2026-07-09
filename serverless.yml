@@ -4,6 +4,10 @@ frameworkVersion: '3'
 custom:
   sharedHttpApiId: ${ssm:/vyva/${self:provider.stage}/HTTP_API_ID}
   sharedAuthorizerId: ${ssm:/vyva/${self:provider.stage}/HTTP_API_AUTHORIZER_ID}
+  corsAllowedOrigins: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_ORIGINS}
+  corsAllowedMethods: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_METHODS}
+  corsAllowedHeaders: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_HEADERS}
+  remindersTable: ${self:provider.stage}-vyva-reminders
 
 provider:
   name: aws
@@ -29,6 +33,8 @@ provider:
     JWT_SECRET: ${ssm:/vyva/${self:provider.stage}/VYVA_JWT_SECRET}
     SECRET_KEY: ${ssm:/vyva/${self:provider.stage}/VYVA_SECRET_KEY}
     VYVAPOS_ID_BUSINESS: ${ssm:/vyva/${self:provider.stage}/VYVAPOS_ID_BUSINESS, ''}
+    REALTIME_PUBLISH_URL: ${ssm:/vyva/${self:provider.stage}/REALTIME_PUBLISH_URL}
+    REALTIME_PUBLISH_SECRET: ${ssm:/vyva/${self:provider.stage}/REALTIME_PUBLISH_SECRET}
 
   iam:
     role:
@@ -67,6 +73,8 @@ provider:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.remindersTable}
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.remindersTable}/*
 
         # Permisos para crear y modificar tablas DynamoDB
         - Effect: Allow
@@ -74,8 +82,6 @@ provider:
             - dynamodb:CreateTable
             - dynamodb:UpdateTable
             - dynamodb:DescribeTable
-            - dynamodb:DescribeTimeToLive
-            - dynamodb:UpdateTimeToLive
             - dynamodb:ListTables
           Resource:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-appointments
@@ -92,6 +98,8 @@ provider:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.remindersTable}
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.remindersTable}/*
 
         # Permisos para invocar Lambda de integrations
         - Effect: Allow
@@ -100,6 +108,7 @@ provider:
           Resource:
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-integrations-${self:provider.stage}-api
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-domains-${self:provider.stage}-api
+            - arn:aws:lambda:${self:provider.region}:*:function:vyva-whatsapp-${self:provider.stage}-api
 
         # Permisos para logs de CloudWatch
         - Effect: Allow
@@ -111,6 +120,17 @@ provider:
             - arn:aws:logs:${self:provider.region}:*:*
 
 functions:
+  preflight:
+    handler: dist/src/preflight.handler
+    memorySize: 128
+    timeout: 5
+    events:
+      - httpApi:
+          path: /api/appointments
+          method: OPTIONS
+      - httpApi:
+          path: /api/appointments/{proxy+}
+          method: OPTIONS
   api:
     handler: dist/src/lambda.handler
     layers:
@@ -124,22 +144,104 @@ functions:
           method: ANY
       - httpApi:
           path: /api/appointments
-          method: OPTIONS
-      - httpApi:
-          path: /api/appointments/{proxy+}
-          method: OPTIONS
+          method: GET
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
       - httpApi:
           path: /api/appointments
-          method: ANY
+          method: PUT
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/appointments
+          method: PATCH
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/appointments
+          method: DELETE
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/appointments
+          method: POST
           authorizer:
             type: request
             id: ${self:custom.sharedAuthorizerId}
       - httpApi:
           path: /api/appointments/{proxy+}
-          method: ANY
+          method: GET
           authorizer:
             type: request
             id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/appointments/{proxy+}
+          method: PUT
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/appointments/{proxy+}
+          method: PATCH
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/appointments/{proxy+}
+          method: DELETE
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+      - httpApi:
+          path: /api/appointments/{proxy+}
+          method: POST
+          authorizer:
+            type: request
+            id: ${self:custom.sharedAuthorizerId}
+
+resources:
+  Resources:
+    RemindersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.remindersTable}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: type
+            AttributeType: S
+          - AttributeName: idReference
+            AttributeType: S
+          - AttributeName: status
+            AttributeType: S
+          - AttributeName: expiresAt
+            AttributeType: N
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: type-idReference-index
+            KeySchema:
+              - AttributeName: type
+                KeyType: HASH
+              - AttributeName: idReference
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: status-expiresAt-index
+            KeySchema:
+              - AttributeName: status
+                KeyType: HASH
+              - AttributeName: expiresAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
 package:
   excludeDevDependencies: true
   patterns:

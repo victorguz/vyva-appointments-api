@@ -11,17 +11,16 @@ import {
   sanitizeNumericValue,
 } from '../../shared/shared.functions';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
-import {
-  CreateAppointmentDto,
-  ListAppointmentDto,
-  UpdateAppointmentDto,
-  UpdateAppointmentStatusDto,
-} from './dto/appointments.dto';
+import { RealtimePublisherService } from '../shared/realtime-publisher.service';
+import { RemindersService } from '../reminders/reminders.service';
+import { CreateAppointmentDto } from './dto/appointments.dto';
 
 @Injectable()
 export class AppointmentsPublicService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
+    private readonly realtimePublisher: RealtimePublisherService,
+    private readonly remindersService: RemindersService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
   ) {
@@ -92,6 +91,17 @@ export class AppointmentsPublicService extends TransactionSupport {
       } catch (syncError) {
         console.error('[createPublic] Google Calendar sync failed:', syncError);
       }
+
+      void this.realtimePublisher.publishAppointmentChange({
+        idBusiness: appointmentData.idBusiness,
+        action: 'created',
+        appointmentId: appointmentData.id,
+        startDate: new Date(appointmentData.startDate).toISOString(),
+        endDate: new Date(appointmentData.endDate).toISOString(),
+      });
+
+      await this.remindersService.sendBookingNotification(appointmentData);
+      await this.remindersService.ensureAppointment(appointmentData);
 
       return new GenericResponse(appointmentData);
     } catch (error) {
