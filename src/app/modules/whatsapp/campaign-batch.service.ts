@@ -1,13 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  DynamoDBClient,
-  GetItemCommand,
-  UpdateItemCommand,
-} from '@aws-sdk/client-dynamodb';
-import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 
 import { WhatsAppService } from './whatsapp.service';
+import { CampaignStatsService } from './campaign-stats.service';
 
 function normalizePhone(raw: string): string | null {
   const digits = raw.replace(/\D/g, '');
@@ -28,6 +23,14 @@ function parseAllowedPhones(envValue?: string): Set<string> | null {
   return allowed.size > 0 ? allowed : null;
 }
 
+export interface CampaignAppointmentContext {
+  customerName?: string;
+  serviceName?: string;
+  employeeName?: string;
+  startDate: string | number;
+  endDate?: string | number;
+}
+
 export interface CampaignDispatchPayload {
   campaignId: string;
   idBusiness: string;
@@ -43,24 +46,25 @@ export interface CampaignDispatchPayload {
     templateName: string;
     languageCode: string;
     templateBody?: string;
+    bodyFieldMapping?: string[];
+    /** When set, whatsapp-api resolves the template in appointment mode. */
+    appointmentTemplateKey?: 'booking' | 'pending' | 'confirmed' | 'completed';
+    appointmentContext?: CampaignAppointmentContext;
+    appointmentBusinessId?: string;
+    idCustomer?: string;
   };
 }
 
 @Injectable()
 export class CampaignBatchService {
   private readonly logger = new Logger(CampaignBatchService.name);
-  private readonly dynamo: DynamoDBClient;
-  private readonly campaignsTable: string;
   private readonly allowedPhones: Set<string> | null;
 
   constructor(
     private readonly whatsAppService: WhatsAppService,
     private readonly configService: ConfigService,
+    private readonly campaignStats: CampaignStatsService,
   ) {
-    const region = this.configService.get<string>('REGION') || 'us-east-1';
-    const stage = this.configService.get<string>('NODE_ENV') || 'qas';
-    this.dynamo = new DynamoDBClient({ region });
-    this.campaignsTable = `${stage}-vyva-campaigns`;
     this.allowedPhones = parseAllowedPhones(
       this.configService.get<string>('CAMPAIGN_QAS_ALLOWED_PHONES'),
     );
@@ -69,13 +73,26 @@ export class CampaignBatchService {
   async processDispatchMessage(payload: CampaignDispatchPayload): Promise<boolean> {
     if (payload.channel !== 'whatsapp') {
       this.logger.warn(`Unsupported channel ${payload.channel}`);
-      return false;
+      await this.campaignStats.recordSendOutcome(payload.campaignId, false);
+      return true;
     }
 
     const waPhone = normalizePhone(payload.recipient.waPhone) ?? payload.recipient.waPhone;
-    if (this.allowedPhones && !this.allowedPhones.has(waPhone)) {
+    const isAppointmentMode = Boolean(
+      payload.template.appointmentTemplateKey &&
+        payload.template.appointmentContext,
+    );
+
+    // Marketing CSV campaigns keep the stage allowlist. Appointment reminders
+    // already use domain recipientPhones from whatsappNotificationSettings.
+    if (
+      !isAppointmentMode &&
+      this.allowedPhones &&
+      !this.allowedPhones.has(waPhone)
+    ) {
       this.logger.warn(`Blocked phone ${waPhone} (QAS allowlist)`);
-      return false;
+      await this.campaignStats.recordSendOutcome(payload.campaignId, false);
+      return true;
     }
 
     try {
@@ -85,74 +102,30 @@ export class CampaignBatchService {
         languageCode: payload.template.languageCode,
         bodyParameters: payload.recipient.bodyParameters,
         templateBody: payload.template.templateBody,
+        bodyFieldMapping: payload.template.bodyFieldMapping,
         bodyPreview: payload.recipient.bodyPreview,
         clientMessageId: payload.recipient.clientMessageId,
+        idCampaign: payload.campaignId,
+        ...(isAppointmentMode
+          ? {
+              appointmentTemplateKey: payload.template.appointmentTemplateKey,
+              appointmentContext: payload.template.appointmentContext,
+              appointmentBusinessId: payload.template.appointmentBusinessId,
+              idCustomer: payload.template.idCustomer,
+            }
+          : {}),
       });
 
       const success = result.success === true;
-      await this.incrementStat(payload.campaignId, success ? 'sent' : 'failed');
-      return success;
+      await this.campaignStats.recordSendOutcome(payload.campaignId, success);
+      return true;
     } catch (err) {
       this.logger.error(
         `Campaign send failed campaign=${payload.campaignId} row=${payload.rowIndex}`,
         err,
       );
-      await this.incrementStat(payload.campaignId, 'failed');
-      return false;
-    }
-  }
-
-  private async incrementStat(
-    campaignId: string,
-    field: 'sent' | 'failed',
-  ): Promise<void> {
-    await this.dynamo.send(
-      new UpdateItemCommand({
-        TableName: this.campaignsTable,
-        Key: marshall({ id: campaignId }),
-        UpdateExpression: `ADD stats.#field :one`,
-        ExpressionAttributeNames: { '#field': field },
-        ExpressionAttributeValues: marshall({ ':one': 1 }),
-      }),
-    );
-
-    await this.maybeCompleteCampaign(campaignId);
-  }
-
-  private async maybeCompleteCampaign(campaignId: string): Promise<void> {
-    const row = await this.dynamo.send(
-      new GetItemCommand({
-        TableName: this.campaignsTable,
-        Key: marshall({ id: campaignId }),
-      }),
-    );
-    if (!row.Item) return;
-
-    const campaign = unmarshall(row.Item) as {
-      status?: string;
-      stats?: {
-        total?: number;
-        queued?: number;
-        sent?: number;
-        failed?: number;
-        skippedDuplicates?: number;
-      };
-    };
-
-    const stats = campaign.stats ?? {};
-    const total = stats.total ?? stats.queued ?? 0;
-    const done = (stats.sent ?? 0) + (stats.failed ?? 0);
-
-    if (total > 0 && done >= total && campaign.status === 'sending') {
-      await this.dynamo.send(
-        new UpdateItemCommand({
-          TableName: this.campaignsTable,
-          Key: marshall({ id: campaignId }),
-          UpdateExpression: 'SET #status = :completed',
-          ExpressionAttributeNames: { '#status': 'status' },
-          ExpressionAttributeValues: marshall({ ':completed': 'completed' }),
-        }),
-      );
+      await this.campaignStats.recordSendOutcome(payload.campaignId, false);
+      return true;
     }
   }
 }

@@ -64,11 +64,10 @@ provider:
             - dynamodb:UpdateItem
             - dynamodb:DeleteItem
           Resource:
-            # Conversations/messages always live in production tables
-            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-messages
-            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-messages/*
-            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-conversations
-            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-conversations/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-messages
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-messages/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-conversations
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-conversations/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-integrations
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-integrations/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-users
@@ -82,8 +81,8 @@ provider:
             - dynamodb:DescribeTable
             - dynamodb:ListTables
           Resource:
-            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-*
-            - arn:aws:dynamodb:${self:provider.region}:*:table/prd-vyva-whatsapp-*/*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-*
+            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-whatsapp-*/*
         - Effect: Allow
           Action:
             - logs:CreateLogGroup
@@ -108,6 +107,12 @@ provider:
             - sqs:ChangeMessageVisibility
           Resource:
             - ${ssm:/vyva/${self:provider.stage}/CAMPAIGN_DISPATCH_QUEUE_ARN, 'arn:aws:sqs:us-east-1:000000000000:placeholder'}
+
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource:
+            - arn:aws:lambda:${self:provider.region}:*:function:vyva-files-${self:provider.stage}-api
 
 functions:
   preflight:

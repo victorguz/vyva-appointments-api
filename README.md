@@ -36,6 +36,8 @@ whatsapp: 'http://localhost:3000/api/whatsapp', // via edge
 
 ## Tables
 
-- `{stage}-vyva-whatsapp-messages`
-- `{stage}-vyva-whatsapp-conversations`
+Each deploy stage (`qas`, `prd`, …) uses its own DynamoDB tables (created by this API on first use):
+
+- `{stage}-vyva-whatsapp-messages` (`create: true`)
+- `{stage}-vyva-whatsapp-conversations` (`create: true`)
 - Reads `{stage}-vyva-integrations` for credentials

@@ -6,6 +6,20 @@ export type WhatsAppTemplateMetaStatus =
   | 'REJECTED'
   | 'PAUSED';
 
+export type WhatsAppTemplateButtonType = 'URL' | 'QUICK_REPLY';
+
+export interface WhatsAppTemplateButton {
+  type: WhatsAppTemplateButtonType;
+  text: string;
+  url?: string;
+}
+
+export interface WhatsAppTemplateLayout {
+  header?: string;
+  footer?: string;
+  buttons?: WhatsAppTemplateButton[];
+}
+
 export interface WhatsAppTemplateMetaState {
   name: string;
   language: string;
@@ -22,6 +36,9 @@ export interface WhatsAppTemplateItem {
   title: string;
   description: string;
   body: string;
+  header?: string;
+  footer?: string;
+  buttons?: WhatsAppTemplateButton[];
   metaCategory: WhatsAppMetaCategory;
   meta?: WhatsAppTemplateMetaState;
 }
@@ -37,6 +54,9 @@ export interface WhatsAppMessageConfig {
   };
   metaLanguage?: string;
   customTemplates?: WhatsAppTemplateItem[];
+  appointmentTemplateLayout?: Partial<
+    Record<'booking' | 'pending' | 'confirmed' | 'completed', WhatsAppTemplateLayout>
+  >;
   appointmentMeta?: Partial<
     Record<'booking' | 'pending' | 'confirmed' | 'completed', WhatsAppTemplateMetaState>
   >;

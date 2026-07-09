@@ -27,18 +27,18 @@ export const APPOINTMENT_META_TEMPLATE_NAMES: Record<
 };
 
 export const DEFAULT_WHATSAPP_MESSAGE_CONFIG: WhatsAppMessageConfig = {
-  dateFormat: 'dd/MM/yyyy',
+  dateFormat: "EEEE, d 'de' MMM",
   timeFormat: 'hh:mm a',
   metaLanguage: 'es',
   messages: {
     pending:
-      'Hola {{customerName}}, {{greeting}}.\n\nPaso por acá para recordarte que tienes una cita de *{{serviceName}}* programada para:\n\n📅 *{{date}}*\n🕐 *{{startTime}}*\n\n¿Confirmamos tu asistencia?',
+      'Hola {{customerName}}, {{greeting}}.\n\nPaso por acá para recordarte que tienes una cita de {{serviceName}} programada para:\n\n📅 {{date}}\n🕐 {{startTime}}\n\n¿Confirmamos tu asistencia?',
     confirmed:
-      'Hola {{customerName}}, {{greeting}}.\n\nTu cita de *{{serviceName}}* está confirmada.\n\n📅 *{{date}}*\n🕐 *{{startTime}}*\n\nTe esperamos *15 minutos antes* para brindarte una mejor atención. ¡Hasta pronto!',
+      'Hola {{customerName}}, {{greeting}}.\n\nTu cita de {{serviceName}} está confirmada.\n\n📅 {{date}}\n🕐 {{startTime}}\n\nTe esperamos *15 minutos antes* para brindarte una mejor atención. ¡Hasta pronto!',
     completed:
-      'Hola {{customerName}}, {{greeting}}.\n\n¿Cómo te fue con tu *{{serviceName}}*? ¿Cómo has sentido los resultados?\n\nTu opinión es muy importante para nosotros.',
+      'Hola {{customerName}}, {{greeting}}.\n\n¿Cómo te fue con tu {{serviceName}}? ¿Cómo has sentido los resultados?\n\nTu opinión es muy importante para nosotros.',
     booking:
-      '¡Todo listo, {{customerName}}! ✨\n\nTu cita quedó reservada:\n\n*{{serviceName}}* con {{employeeName}}\n📅 *{{date}}* a las *{{startTime}}*\n\nPara brindarte la atención personalizada que mereces, te pedimos llegar *10 minutos antes*. Ten en cuenta que nuestro tiempo de espera máximo es de 15 minutos.\n\nSi tu cita es a las 4:00 pm o más tarde, te agradeceríamos estar aquí *15 minutos antes*. Al ser el cierre de nuestra jornada, la puntualidad es clave para evitar reprogramaciones y garantizar que recibas tu tratamiento sin prisas.',
+      '¡Todo listo, {{customerName}}! ✨\n\nTu cita quedó reservada:\n\n{{serviceName}} con {{employeeName}}\n📅 {{date}} a las {{startTime}}\n\nPara brindarte la atención personalizada que mereces, te pedimos llegar *10 minutos antes*. Ten en cuenta que nuestro tiempo de espera máximo es de 15 minutos.\n\nSi tu cita es a las 4:00 pm o más tarde, te agradeceríamos estar aquí *15 minutos antes*. Al ser el cierre de nuestra jornada, la puntualidad es clave para evitar reprogramaciones y garantizar que recibas tu tratamiento sin prisas.',
   },
 };
 
@@ -89,6 +89,7 @@ export function normalizeWhatsAppMessageConfig(
       ...template,
       meta: template.meta ? { ...template.meta } : undefined,
     })),
+    appointmentTemplateLayout: { ...(raw?.appointmentTemplateLayout ?? {}) },
     appointmentMeta: { ...(raw?.appointmentMeta ?? {}) },
   };
 }
@@ -135,7 +136,7 @@ function normalizeMetaStatus(
   }
 }
 
-function findMetaTemplateByName(
+function findMetaTemplateByExactName(
   metaTemplates: MetaTemplateSyncSource[],
   name: string,
   preferredLanguage: string,
@@ -145,6 +146,81 @@ function findMetaTemplateByName(
       (template) =>
         template.name === name && template.language === preferredLanguage,
     ) ?? metaTemplates.find((template) => template.name === name)
+  );
+}
+
+/**
+ * Resolves a Meta template by exact candidate names first, then by prefix
+ * (covers fallback names like `vyva_appointment_booking_0ac2b2`).
+ */
+export function findMetaTemplateByCandidates(
+  metaTemplates: MetaTemplateSyncSource[],
+  candidates: Array<string | undefined | null>,
+  preferredLanguage: string,
+  options?: { prefixBases?: Array<string | undefined | null> },
+): MetaTemplateSyncSource | undefined {
+  const seen = new Set<string>();
+
+  for (const candidate of candidates) {
+    const name = candidate?.trim();
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    const exact = findMetaTemplateByExactName(
+      metaTemplates,
+      name,
+      preferredLanguage,
+    );
+    if (exact) {
+      return exact;
+    }
+  }
+
+  const prefixBases = options?.prefixBases?.length
+    ? options.prefixBases
+    : candidates;
+
+  for (const base of prefixBases) {
+    const prefix = base?.trim();
+    if (!prefix) {
+      continue;
+    }
+
+    const matches = metaTemplates.filter(
+      (template) =>
+        template.name === prefix || template.name.startsWith(`${prefix}_`),
+    );
+    if (!matches.length) {
+      continue;
+    }
+
+    const byLanguage = matches.filter(
+      (template) => template.language === preferredLanguage,
+    );
+    const pool = byLanguage.length ? byLanguage : matches;
+    const approved = pool.find((template) => template.status === 'APPROVED');
+    if (approved) {
+      return approved;
+    }
+    return pool[0];
+  }
+
+  return undefined;
+}
+
+function resolveAppointmentMetaTemplate(
+  metaTemplates: MetaTemplateSyncSource[],
+  appointmentKey: AppointmentTemplateKey,
+  existingMeta: WhatsAppTemplateMetaState | undefined,
+  preferredLanguage: string,
+): MetaTemplateSyncSource | undefined {
+  const canonicalName = APPOINTMENT_META_TEMPLATE_NAMES[appointmentKey];
+  return findMetaTemplateByCandidates(
+    metaTemplates,
+    [existingMeta?.name, canonicalName],
+    preferredLanguage,
+    { prefixBases: [canonicalName, existingMeta?.name] },
   );
 }
 
@@ -181,11 +257,13 @@ export function syncWhatsAppConfigFromMeta(
   const next = normalizeWhatsAppMessageConfig(config);
   let changed = false;
 
-  for (const [key, metaName] of Object.entries(APPOINTMENT_META_TEMPLATE_NAMES)) {
-    const appointmentKey = key as AppointmentTemplateKey;
-    const metaTemplate = findMetaTemplateByName(
+  for (const key of APPOINTMENT_TEMPLATE_KEYS) {
+    const appointmentKey = key;
+    const existingMeta = next.appointmentMeta?.[appointmentKey];
+    const metaTemplate = resolveAppointmentMetaTemplate(
       metaTemplates,
-      metaName,
+      appointmentKey,
+      existingMeta,
       preferredLanguage,
     );
     if (!metaTemplate?.preview?.trim()) {
@@ -199,7 +277,6 @@ export function syncWhatsAppConfigFromMeta(
       changed = true;
     }
 
-    const existingMeta = next.appointmentMeta?.[appointmentKey];
     const mergedMeta = buildMetaStateFromTemplate(metaTemplate, existingMeta);
     if (JSON.stringify(existingMeta) !== JSON.stringify(mergedMeta)) {
       next.appointmentMeta = {
@@ -212,10 +289,11 @@ export function syncWhatsAppConfigFromMeta(
 
   next.customTemplates = (next.customTemplates ?? []).map((custom) => {
     const metaName = resolveCustomMetaTemplateName(custom);
-    const metaTemplate = findMetaTemplateByName(
+    const metaTemplate = findMetaTemplateByCandidates(
       metaTemplates,
-      metaName,
+      [custom.meta?.name, metaName],
       preferredLanguage,
+      { prefixBases: [metaName, custom.meta?.name] },
     );
     if (!metaTemplate?.preview?.trim()) {
       return custom;
@@ -235,6 +313,65 @@ export function syncWhatsAppConfigFromMeta(
     }
 
     return updated;
+  });
+
+  return { config: next, changed };
+}
+
+/** Sync Meta linkage (status, name, category) without overwriting domain bodies. */
+export function syncWhatsAppMetaStateFromMeta(
+  config: WhatsAppMessageConfig,
+  metaTemplates: MetaTemplateSyncSource[],
+): { config: WhatsAppMessageConfig; changed: boolean } {
+  if (!metaTemplates.length) {
+    return { config, changed: false };
+  }
+
+  const preferredLanguage = config.metaLanguage?.trim() || 'es';
+  const next = normalizeWhatsAppMessageConfig(config);
+  let changed = false;
+
+  for (const key of APPOINTMENT_TEMPLATE_KEYS) {
+    const appointmentKey = key;
+    const existingMeta = next.appointmentMeta?.[appointmentKey];
+    const metaTemplate = resolveAppointmentMetaTemplate(
+      metaTemplates,
+      appointmentKey,
+      existingMeta,
+      preferredLanguage,
+    );
+    if (!metaTemplate) {
+      continue;
+    }
+
+    const mergedMeta = buildMetaStateFromTemplate(metaTemplate, existingMeta);
+    if (JSON.stringify(existingMeta) !== JSON.stringify(mergedMeta)) {
+      next.appointmentMeta = {
+        ...next.appointmentMeta,
+        [appointmentKey]: mergedMeta,
+      };
+      changed = true;
+    }
+  }
+
+  next.customTemplates = (next.customTemplates ?? []).map((custom) => {
+    const metaName = resolveCustomMetaTemplateName(custom);
+    const metaTemplate = findMetaTemplateByCandidates(
+      metaTemplates,
+      [custom.meta?.name, metaName],
+      preferredLanguage,
+      { prefixBases: [metaName, custom.meta?.name] },
+    );
+    if (!metaTemplate) {
+      return custom;
+    }
+
+    const mergedMeta = buildMetaStateFromTemplate(metaTemplate, custom.meta);
+    if (JSON.stringify(custom.meta) !== JSON.stringify(mergedMeta)) {
+      changed = true;
+      return { ...custom, meta: mergedMeta };
+    }
+    return custom;
   });
 
   return { config: next, changed };

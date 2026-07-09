@@ -1,12 +1,11 @@
 import { ConfigService } from '@nestjs/config';
 import { DynamooseModuleOptions } from 'nestjs-dynamoose';
-import { Environment } from './environment.config';
-
-/** Conversations/messages always use production tables (shared webhook data). */
-export const WHATSAPP_DATA_TABLE_PREFIX = `${Environment.Production}-vyva-`;
 
 export const getRuntimeTablePrefix = (nodeEnv: string): string =>
   `${nodeEnv}-vyva-`;
+
+export const getWhatsAppMessagesTableName = (nodeEnv: string): string =>
+  `${getRuntimeTablePrefix(nodeEnv)}whatsapp-messages`;
 
 export const dynamooseConfig = (
   configService: ConfigService,
@@ -20,12 +19,9 @@ export const dynamooseConfig = (
       region: configService.get('REGION'),
     },
     local: false,
-    // logger: !isProduction,
     table: {
       prefix: getRuntimeTablePrefix(nodeEnv),
-      // Tablas existentes en QAS/PRD; create se desactiva por modelo en forFeature
       create: false,
-      // Initialize debe estar en true para poder usar tablas existentes
       initialize: true,
       waitForActive: false,
       throughput: 'ON_DEMAND',

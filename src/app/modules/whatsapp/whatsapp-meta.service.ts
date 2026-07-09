@@ -9,6 +9,7 @@ import {
   MetaEmbeddedSignupSnapshot,
   redactMetaAccessTokenPayload,
 } from '../../shared/meta-embedded-signup.types';
+import { buildMetaTemplateComponents } from '../../shared/meta-template-components.util';
 import { IntegrationsCredentialsService } from './integrations-credentials.service';
 
 /** Meta Graph API version used for outbound messages (Cloud API). */
@@ -106,6 +107,14 @@ export interface WhatsAppBusinessProfile {
   nameStatus?: string;
   newNameStatus?: string;
   displayNameEditable?: boolean;
+  /** Business @username from Meta Username API. */
+  username?: string;
+  usernameStatus?: string;
+}
+
+export interface WhatsAppMessageRecipient {
+  phone?: string;
+  userId?: string;
 }
 
 export interface UpdateWhatsAppBusinessProfileInput {
@@ -128,7 +137,9 @@ export interface MetaOAuthConnectResult {
 
 interface MetaTemplateComponent {
   type?: string;
+  format?: string;
   text?: string;
+  buttons?: Array<{ type?: string; text?: string }>;
 }
 
 interface MetaMessageTemplate {
@@ -176,11 +187,30 @@ export class WhatsAppMetaService {
 
   async sendTextMessage(
     credentials: WhatsAppIntegrationData,
-    toPhone: string,
+    recipient: WhatsAppMessageRecipient | string,
     text: string,
   ): Promise<MetaSendTextResult> {
     const url = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${credentials.phoneNumberId}/messages`;
-    const to = toPhone.replace(/\D/g, '');
+    const resolved: WhatsAppMessageRecipient =
+      typeof recipient === 'string'
+        ? { phone: recipient.replace(/\D/g, '') }
+        : recipient;
+
+    const body: Record<string, unknown> = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      type: 'text',
+      text: { body: text },
+    };
+    if (resolved.phone) {
+      body.to = resolved.phone.replace(/\D/g, '');
+    }
+    if (resolved.userId) {
+      body.recipient = resolved.userId;
+    }
+    if (!body.to && !body.recipient) {
+      throw new Error('WhatsApp recipient is required');
+    }
 
     const res = await fetch(url, {
       method: 'POST',
@@ -188,13 +218,7 @@ export class WhatsAppMetaService {
         Authorization: `Bearer ${credentials.accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to,
-        type: 'text',
-        text: { body: text },
-      }),
+      body: JSON.stringify(body),
     });
 
     const json = (await res.json()) as {
@@ -402,29 +426,26 @@ export class WhatsAppMetaService {
       name: string;
       language: string;
       category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION';
+      headerText?: string;
+      headerExamples?: string[];
       bodyText: string;
       bodyExamples: string[];
+      footerText?: string;
+      buttons?: Array<{
+        type: 'URL' | 'QUICK_REPLY';
+        text: string;
+        url?: string;
+      }>;
     },
   ): Promise<{ id: string; status: string; category: string }> {
-    const bodyComponent: Record<string, unknown> = {
-      type: 'BODY',
-      text: payload.bodyText,
-    };
-
-    const variableCount = (payload.bodyText.match(/\{\{\d+\}\}/g) ?? []).length
-      ? Math.max(
-          ...(payload.bodyText.match(/\{\{\d+\}\}/g) ?? []).map((match) =>
-            Number(match.replace(/\D/g, '')),
-          ),
-        )
-      : 0;
-
-    if (variableCount > 0) {
-      if (payload.bodyExamples.length !== variableCount) {
-        throw new Error('MS014');
-      }
-      bodyComponent.example = { body_text: [payload.bodyExamples] };
-    }
+    const components = buildMetaTemplateComponents({
+      headerText: payload.headerText,
+      headerExamples: payload.headerExamples,
+      bodyText: payload.bodyText,
+      bodyExamples: payload.bodyExamples,
+      footerText: payload.footerText,
+      buttons: payload.buttons,
+    });
 
     const { ok, json } = await this.graphPostAbsolute<
       MetaGraphResponse & { id?: string; status?: string; category?: string }
@@ -433,12 +454,17 @@ export class WhatsAppMetaService {
       language: payload.language,
       category: payload.category,
       allow_category_change: true,
-      components: [bodyComponent],
+      components,
     });
 
     if (!ok || !json.id) {
+      const metaError = json.error as MetaGraphError & {
+        error_user_msg?: string;
+      };
       throw new Error(
-        json.error?.message || 'No se pudo crear la plantilla en Meta',
+        metaError?.error_user_msg?.trim() ||
+          metaError?.message ||
+          'No se pudo crear la plantilla en Meta',
       );
     }
 
@@ -469,13 +495,16 @@ export class WhatsAppMetaService {
 
   async sendTemplateMessage(
     credentials: WhatsAppIntegrationData,
-    toPhone: string,
+    recipient: WhatsAppMessageRecipient | string,
     templateName: string,
     languageCode: string,
     bodyParameters: string[] = [],
   ): Promise<MetaSendTextResult> {
     const url = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${credentials.phoneNumberId}/messages`;
-    const to = toPhone.replace(/\D/g, '');
+    const resolved: WhatsAppMessageRecipient =
+      typeof recipient === 'string'
+        ? { phone: recipient.replace(/\D/g, '') }
+        : recipient;
 
     const template: Record<string, unknown> = {
       name: templateName,
@@ -491,19 +520,29 @@ export class WhatsAppMetaService {
       ];
     }
 
+    const body: Record<string, unknown> = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      type: 'template',
+      template,
+    };
+    if (resolved.phone) {
+      body.to = resolved.phone.replace(/\D/g, '');
+    }
+    if (resolved.userId) {
+      body.recipient = resolved.userId;
+    }
+    if (!body.to && !body.recipient) {
+      throw new Error('WhatsApp recipient is required');
+    }
+
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${credentials.accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to,
-        type: 'template',
-        template,
-      }),
+      body: JSON.stringify(body),
     });
 
     const json = (await res.json()) as {
@@ -1158,8 +1197,17 @@ export class WhatsAppMetaService {
   private mapMessageTemplate(
     row: MetaMessageTemplate,
   ): WhatsAppTemplateSummary {
+    const header = row.components?.find(
+      (component) => component.type === 'HEADER',
+    );
     const body = row.components?.find((component) => component.type === 'BODY');
-    const preview = body?.text?.trim() || row.name;
+    const footer = row.components?.find(
+      (component) => component.type === 'FOOTER',
+    );
+    const preview =
+      [header?.text?.trim(), body?.text?.trim(), footer?.text?.trim()]
+        .filter(Boolean)
+        .join('\n') || row.name;
     const bodyParameterCount = (preview.match(/\{\{\d+\}\}/g) ?? []).length;
 
     return {
@@ -1196,11 +1244,107 @@ export class WhatsAppMetaService {
   async getFullBusinessProfile(
     credentials: WhatsAppIntegrationData,
   ): Promise<WhatsAppBusinessProfile> {
-    const [profile, displayName] = await Promise.all([
+    const [profile, displayName, username] = await Promise.all([
       this.getBusinessProfile(credentials),
       this.getPhoneNumberDisplayName(credentials),
+      this.getBusinessUsername(credentials),
     ]);
-    return { ...profile, ...displayName };
+    return { ...profile, ...displayName, ...username };
+  }
+
+  async getBusinessUsername(
+    credentials: WhatsAppIntegrationData,
+  ): Promise<Pick<WhatsAppBusinessProfile, 'username' | 'usernameStatus'>> {
+    const { ok, json } = await this.graphGet<
+      MetaGraphResponse & {
+        username?: string;
+        status?: string;
+      }
+    >(credentials, `${credentials.phoneNumberId}/username`);
+
+    if (!ok) {
+      return {};
+    }
+
+    return {
+      username: json.username?.trim() || undefined,
+      usernameStatus: json.status?.trim() || undefined,
+    };
+  }
+
+  async getBusinessUsernameSuggestions(
+    credentials: WhatsAppIntegrationData,
+  ): Promise<string[]> {
+    const { ok, json } = await this.graphGet<
+      MetaGraphResponse & {
+        username_suggestions?: string[];
+      }
+    >(credentials, `${credentials.phoneNumberId}/username_suggestions`);
+
+    if (!ok) {
+      return [];
+    }
+
+    return (json.username_suggestions ?? [])
+      .map((entry) => entry?.trim())
+      .filter(Boolean);
+  }
+
+  async updateBusinessUsername(
+    credentials: WhatsAppIntegrationData,
+    username: string,
+    transferAction?: 'none' | 'force_transfer',
+  ): Promise<Pick<WhatsAppBusinessProfile, 'username' | 'usernameStatus'>> {
+    const normalized = username.trim().replace(/^@/, '');
+    const body: Record<string, unknown> = { username: normalized };
+    if (transferAction) {
+      body.transfer_action = transferAction;
+    }
+
+    const { ok, json } = await this.graphPostAbsolute<
+      MetaGraphResponse & {
+        username?: string;
+        status?: string;
+      }
+    >(credentials, `${credentials.phoneNumberId}/username`, body);
+
+    if (!ok) {
+      const message =
+        json.error?.message ??
+        'No se pudo actualizar el nombre de usuario de WhatsApp.';
+      const err = new Error(message) as Error & { metaErrorCode?: number };
+      err.metaErrorCode = json.error?.code;
+      throw err;
+    }
+
+    return {
+      username: json.username?.trim() || normalized,
+      usernameStatus: json.status?.trim() || undefined,
+    };
+  }
+
+  async deleteBusinessUsername(
+    credentials: WhatsAppIntegrationData,
+  ): Promise<boolean> {
+    const url = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${credentials.phoneNumberId}/username`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${credentials.accessToken}`,
+      },
+    });
+
+    if (!res.ok) {
+      const json = (await res.json()) as MetaGraphResponse;
+      const message =
+        json.error?.message ??
+        'No se pudo eliminar el nombre de usuario de WhatsApp.';
+      const err = new Error(message) as Error & { metaErrorCode?: number };
+      err.metaErrorCode = json.error?.code;
+      throw err;
+    }
+
+    return true;
   }
 
   async getPhoneNumberDisplayName(
@@ -1497,6 +1641,54 @@ export class WhatsAppMetaService {
 
     const json = (await res.json()) as MetaGraphResponse;
     return { ok: res.ok, json };
+  }
+
+  /** Descarga el binario de un media de WhatsApp Cloud API por su id de Meta. */
+  async fetchMediaBuffer(
+    credentials: WhatsAppIntegrationData,
+    mediaId: string,
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
+    const trimmedId = mediaId.trim();
+    if (!trimmedId) {
+      throw new Error('WhatsApp media id is required');
+    }
+
+    const metaUrl = `https://graph.facebook.com/${WHATSAPP_GRAPH_API_VERSION}/${trimmedId}`;
+    const metaRes = await fetch(metaUrl, {
+      headers: {
+        Authorization: `Bearer ${credentials.accessToken}`,
+      },
+    });
+
+    const metaJson = (await metaRes.json()) as {
+      url?: string;
+      mime_type?: string;
+      error?: { message?: string };
+    };
+
+    if (!metaRes.ok || !metaJson.url) {
+      throw new Error(
+        metaJson.error?.message || 'Could not resolve WhatsApp media URL',
+      );
+    }
+
+    const fileRes = await fetch(metaJson.url, {
+      headers: {
+        Authorization: `Bearer ${credentials.accessToken}`,
+      },
+    });
+
+    if (!fileRes.ok) {
+      throw new Error('Could not download WhatsApp media');
+    }
+
+    const buffer = Buffer.from(await fileRes.arrayBuffer());
+    const mimeType =
+      metaJson.mime_type ||
+      fileRes.headers.get('content-type') ||
+      'application/octet-stream';
+
+    return { buffer, mimeType };
   }
 
   private matchesSignature(

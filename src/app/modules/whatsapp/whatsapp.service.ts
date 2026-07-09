@@ -1,10 +1,22 @@
-import { HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectModel, Model } from 'nestjs-dynamoose';
 import { randomInt } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  DynamoDBClient,
+  QueryCommand,
+  ScanCommand,
+} from '@aws-sdk/client-dynamodb';
+import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 
+import { getWhatsAppMessagesTableName } from '../../core/config/dynamoose.config';
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { normalizeColombiaWaPhone } from '../../shared/shared.functions';
+import {
+  isWhatsAppBsuid,
+  resolveInboundSenderIdentity,
+  resolveWhatsAppMessageRecipient,
+} from '../../shared/whatsapp-identity.util';
 import {
   WhatsAppConversation,
   WhatsAppConversationKey,
@@ -16,10 +28,11 @@ import {
 } from '../../schemas/whatsapp-message.schema';
 import { WhatsAppIntegrationData } from '../../schemas/integration.schema';
 import { Domain, DomainKey } from '../../schemas/domain.schema';
-import { User } from '../../schemas/user.schema';
+import { User, UserKey } from '../../schemas/user.schema';
 import {
   SendWhatsAppMessageDto,
   SendWhatsAppTemplateDto,
+  AppointmentTemplateContextDto,
   ListMessagesQueryDto,
   WhatsAppMessagesPageDto,
   RegisterTemplatesBatchDto,
@@ -28,6 +41,8 @@ import {
   SaveWhatsAppTemplateDto,
   IntegrationSetupResultDto,
   UpdateWhatsAppBusinessProfileDto,
+  CampaignMessageRowDto,
+  EnsureNotificationTemplatesDto,
 } from './dto/whatsapp.dto';
 import {
   convertVyvaBodyToMeta,
@@ -36,24 +51,41 @@ import {
   isValidMetaTemplateName,
   normalizeMetaTemplateLanguage,
   sanitizeMetaTemplateName,
+  buildMetaTemplateFallbackName,
+  collectRelatedMetaTemplateNames,
   validateMetaTemplateBody,
   validateVyvaTemplateBody,
 } from '../../shared/whatsapp-template.util';
+import { validateCampaignTemplateParameters } from '../../shared/campaign-template-validation.util';
+import {
+  AppointmentTemplateSendPlan,
+  buildAppointmentTemplateSendPlan,
+  businessHasWhatsAppMessageConfig,
+  resolveSendableAppointmentTemplateMeta,
+  resolveWhatsAppBusinessIdForAppointment,
+} from '../../shared/whatsapp-appointment-template-send.util';
 import {
   DEFAULT_WHATSAPP_MESSAGE_CONFIG,
   APPOINTMENT_TEMPLATE_KEYS,
   normalizeWhatsAppMessageConfig,
+  syncWhatsAppConfigFromMeta,
+  syncWhatsAppMetaStateFromMeta,
   WHATSAPP_MESSAGES_DOMAIN_GROUP,
+  type AppointmentTemplateKey,
 } from '../../shared/whatsapp-message-config.util';
 import { WhatsAppMessageConfig, MetaTemplateSyncSource } from '../../shared/whatsapp-message-config.types';
 import {
   applyRegistrationResultToConfig,
+  applyTemplateMetaStateFromMeta,
   applyTemplateSaveToConfig,
   buildWhatsAppTemplateCatalog,
   buildWhatsAppTemplateEditorDetail,
   findMetaTemplateByName,
+  getTemplateDomainBody,
+  getTemplateLayout,
   resolveMetaRegistrationName,
   resolveTemplateKind,
+  templateRequiresMetaRegistration,
 } from '../../shared/whatsapp-template-catalog.util';
 import {
   WhatsAppTemplateCatalogItem,
@@ -70,10 +102,28 @@ import {
   getServiceWindowState,
   withServiceWindow,
 } from '../../shared/whatsapp-window';
-import { extractWhatsAppMessageContent } from '../../shared/whatsapp-message-content.util';
+import {
+  extractWhatsAppMessageContent,
+  extractMediaIdFromMessagePayload,
+  extractMediaStorageUrlFromMessagePayload,
+  mergeMediaStorageIntoPayload,
+  defaultMediaFileName,
+  isInboundMediaMessageType,
+} from '../../shared/whatsapp-message-content.util';
 import { IntegrationsCredentialsService } from './integrations-credentials.service';
 import { WhatsAppMetaService } from './whatsapp-meta.service';
+import { WhatsAppMediaFilesService } from './whatsapp-media-files.service';
 import { RealtimePublisherService } from './realtime-publisher.service';
+import { CampaignStatsService } from './campaign-stats.service';
+import {
+  buildNotificationTemplateDefinitions,
+  DEFAULT_WHATSAPP_NOTIFICATION_SETTINGS,
+  NOTIFICATION_TEMPLATE_KEYS,
+  NotificationTemplateKey,
+  normalizeWhatsAppNotificationSettings,
+  WHATSAPP_NOTIFICATION_SETTINGS_GROUP,
+  WhatsAppNotificationSettings,
+} from '../../shared/whatsapp-notification.util';
 
 @Injectable()
 export class WhatsAppService {
@@ -86,6 +136,12 @@ export class WhatsAppService {
     string,
     { body: string; cachedAt: number }
   >();
+  private readonly whatsAppMessagesTable = getWhatsAppMessagesTableName(
+    process.env.NODE_ENV || 'qas',
+  );
+  private readonly dynamo = new DynamoDBClient({
+    region: process.env.REGION || 'us-east-1',
+  });
 
   constructor(
     @InjectModel('WhatsAppMessage')
@@ -97,9 +153,13 @@ export class WhatsAppService {
     >,
     @InjectModel('Domain')
     private readonly domainModel: Model<Domain, DomainKey>,
+    @InjectModel('User')
+    private readonly userModel: Model<User, UserKey>,
     private readonly credentialsService: IntegrationsCredentialsService,
     private readonly metaService: WhatsAppMetaService,
+    private readonly mediaFilesService: WhatsAppMediaFilesService,
     private readonly realtimePublisher: RealtimePublisherService,
+    private readonly campaignStats: CampaignStatsService,
   ) {}
 
   async listConversations(
@@ -185,6 +245,162 @@ export class WhatsAppService {
     });
   }
 
+  async listCampaignMessages(
+    idBusiness: string,
+    idCampaign: string,
+  ): Promise<GenericResponse<CampaignMessageRowDto[]>> {
+    const messages = await this.loadCampaignMessages(idBusiness, idCampaign);
+
+    const respondedConversations = new Set(
+      messages
+        .filter((m) => m.direction === 'inbound' && m.campaignResponse === true)
+        .map((m) => m.idConversation),
+    );
+
+    const conversationNames =
+      await this.resolveConversationNames(messages);
+
+    const outbound = messages
+      .filter((m) => m.direction === 'outbound')
+      .sort((a, b) => b.timestamp - a.timestamp);
+
+    const result: CampaignMessageRowDto[] = outbound.map((m) => ({
+      id: m.id,
+      idConversation: m.idConversation,
+      waPhone: m.waPhone,
+      displayName: conversationNames[m.idConversation],
+      idCustomer: m.idCustomer,
+      body: m.body,
+      status: m.status,
+      sentAt: m.sentAt,
+      deliveredAt: m.deliveredAt,
+      readAt: m.readAt,
+      responded: respondedConversations.has(m.idConversation),
+      errorMessage: this.summarizeStatusError(m.statusErrors),
+      timestamp: m.timestamp,
+    }));
+
+    return new GenericResponse(result);
+  }
+
+  private async loadCampaignMessages(
+    idBusiness: string,
+    idCampaign: string,
+  ): Promise<WhatsAppMessage[]> {
+    try {
+      const rows = await this.messageModel
+        .query('idCampaign')
+        .eq(idCampaign)
+        .using('idCampaign-timestamp-index')
+        .exec();
+
+      return rows
+        .map((r) => r.toJSON() as WhatsAppMessage)
+        .filter((m) => m.idBusiness === idBusiness);
+    } catch (err) {
+      if (!this.isMissingCampaignIndexError(err)) {
+        this.logger.error(
+          `Failed to load campaign messages for ${idCampaign}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+        throw err;
+      }
+
+      this.logger.warn(
+        `idCampaign-timestamp-index unavailable; scanning campaign messages for ${idCampaign}`,
+      );
+      return this.scanCampaignMessages(idBusiness, idCampaign);
+    }
+  }
+
+  private async scanCampaignMessages(
+    idBusiness: string,
+    idCampaign: string,
+  ): Promise<WhatsAppMessage[]> {
+    const messages: WhatsAppMessage[] = [];
+    let lastEvaluatedKey: ScanCommand['input']['ExclusiveStartKey'];
+
+    do {
+      const response = await this.dynamo.send(
+        new ScanCommand({
+          TableName: this.whatsAppMessagesTable,
+          FilterExpression:
+            'idCampaign = :idCampaign AND idBusiness = :idBusiness',
+          ExpressionAttributeValues: marshall({
+            ':idCampaign': idCampaign,
+            ':idBusiness': idBusiness,
+          }),
+          ExclusiveStartKey: lastEvaluatedKey,
+        }),
+      );
+
+      for (const item of response.Items ?? []) {
+        messages.push(unmarshall(item) as WhatsAppMessage);
+      }
+
+      lastEvaluatedKey = response.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+
+    return messages;
+  }
+
+  private isMissingCampaignIndexError(err: unknown): boolean {
+    const message =
+      err instanceof Error
+        ? err.message
+        : typeof err === 'string'
+          ? err
+          : JSON.stringify(err);
+
+    return (
+      message.includes('idCampaign-timestamp-index') ||
+      message.includes('Cannot do operations on a non-existent table') ||
+      message.includes('ResourceNotFoundException') ||
+      message.includes('ValidationException')
+    );
+  }
+
+  private async resolveConversationNames(
+    messages: WhatsAppMessage[],
+  ): Promise<Record<string, string>> {
+    const ids = Array.from(new Set(messages.map((m) => m.idConversation)));
+    const names: Record<string, string> = {};
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const row = await this.conversationModel.get({ id });
+          const conv = row?.toJSON() as WhatsAppConversation | undefined;
+          if (conv?.displayName) {
+            names[id] = conv.displayName;
+          }
+        } catch {
+          /* ignore lookup failures */
+        }
+      }),
+    );
+    return names;
+  }
+
+  private summarizeStatusError(statusErrors?: string): string | undefined {
+    if (!statusErrors) return undefined;
+    try {
+      const parsed = JSON.parse(statusErrors) as Array<{
+        title?: string;
+        message?: string;
+        error_data?: { details?: string };
+      }>;
+      const first = parsed?.[0];
+      return (
+        first?.error_data?.details ||
+        first?.message ||
+        first?.title ||
+        undefined
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
   async sendMessage(
     idBusiness: string,
     dto: SendWhatsAppMessageDto,
@@ -213,19 +429,25 @@ export class WhatsAppService {
       }
     }
 
-    const waPhone = normalizeColombiaWaPhone(
-      dto.waPhone || conversation?.waPhone || '',
-    );
-    if (!waPhone) {
+    const waPhoneInput = dto.waPhone || conversation?.waPhone || '';
+    const recipient = conversation
+      ? resolveWhatsAppMessageRecipient(conversation)
+      : resolveWhatsAppMessageRecipient({ waPhone: waPhoneInput });
+    if (!recipient.phone && !recipient.userId) {
       throw new Error('MS043');
     }
+    const storageWaPhone =
+      normalizeColombiaWaPhone(waPhoneInput) ||
+      conversation?.waPhone?.trim() ||
+      recipient.userId ||
+      recipient.phone ||
+      '';
 
     if (!conversation) {
-      conversation = await this.findOrCreateConversation(
-        idBusiness,
-        waPhone,
-        dto.displayName,
-      );
+      conversation = await this.findOrCreateConversation(idBusiness, {
+        waPhone: storageWaPhone,
+        displayName: dto.displayName,
+      });
     }
 
     conversation = await this.applyConversationCustomerLink(
@@ -243,7 +465,7 @@ export class WhatsAppService {
       idCustomer: conversation.idCustomer ?? dto.idCustomer,
       clientMessageId: dto.clientMessageId,
       direction: 'outbound',
-      waPhone,
+      waPhone: storageWaPhone,
       type: 'text',
       body: dto.text,
       status: 'pending',
@@ -255,7 +477,7 @@ export class WhatsAppService {
     try {
       const { metaMessageId } = await this.metaService.sendTextMessage(
         credentials!,
-        waPhone,
+        recipient,
         dto.text,
       );
 
@@ -285,6 +507,162 @@ export class WhatsAppService {
         (saved?.toJSON() as WhatsAppMessage) ?? pending,
       );
     }
+  }
+
+  async resolveMessageMediaUrl(
+    idBusiness: string,
+    idMessage: string,
+    user: User,
+  ): Promise<{ url: string; mimeType: string; fileName: string }> {
+    const row = await this.messageModel.get({ id: idMessage });
+    if (!row) {
+      throw new Error('MS043');
+    }
+
+    const message = row.toJSON() as WhatsAppMessage;
+    if (message.idBusiness !== idBusiness) {
+      throw new Error('MS043');
+    }
+
+    let mimeType = 'application/octet-stream';
+    let preferredFileName: string | undefined;
+    if (message.payload?.trim()) {
+      try {
+        const payload = JSON.parse(message.payload) as {
+          media?: { mimeType?: string };
+          message?: { document?: { filename?: string } };
+        };
+        if (payload.media?.mimeType?.trim()) {
+          mimeType = payload.media.mimeType.split(';')[0].trim();
+        }
+        preferredFileName = payload.message?.document?.filename?.trim();
+      } catch {
+        // Keep defaults from message type below.
+      }
+    }
+
+    let fileName = defaultMediaFileName(
+      message.type,
+      mimeType,
+      preferredFileName,
+    );
+
+    const cachedUrl = extractMediaStorageUrlFromMessagePayload(message.payload);
+    if (cachedUrl) {
+      return { url: cachedUrl, mimeType, fileName };
+    }
+
+    const uploaded = await this.uploadMessageMediaToStorage(
+      idBusiness,
+      message,
+      user,
+    );
+    if (!uploaded) {
+      throw new BadRequestException('Message has no downloadable media');
+    }
+
+    const updatedPayload = mergeMediaStorageIntoPayload(message.payload, {
+      url: uploaded.url,
+      route: uploaded.route,
+    });
+    await this.messageModel.update(
+      { id: idMessage },
+      { payload: updatedPayload },
+    );
+
+    return {
+      url: uploaded.url,
+      mimeType: uploaded.mimeType,
+      fileName: uploaded.fileName,
+    };
+  }
+
+  private async resolveFilesInvokeUser(idBusiness: string): Promise<User> {
+    const integration = await this.credentialsService.getIntegrationRow(
+      idBusiness,
+    );
+    const userId = integration?.userId?.trim();
+    if (!userId) {
+      throw new Error('WhatsApp integration owner not found');
+    }
+
+    const row = await this.userModel.get({ id: userId });
+    if (!row) {
+      throw new Error('WhatsApp integration owner user not found');
+    }
+
+    const user = row.toJSON() as User;
+    user.idBusiness = idBusiness;
+    return user;
+  }
+
+  private async uploadMessageMediaToStorage(
+    idBusiness: string,
+    message: Pick<WhatsAppMessage, 'idConversation' | 'type' | 'payload'>,
+    user: User,
+  ): Promise<{
+    url: string;
+    route: string;
+    mimeType: string;
+    fileName: string;
+  } | null> {
+    const mediaId = extractMediaIdFromMessagePayload(message.payload);
+    if (!mediaId) {
+      return null;
+    }
+
+    let mimeType = 'application/octet-stream';
+    let preferredFileName: string | undefined;
+    if (message.payload?.trim()) {
+      try {
+        const payload = JSON.parse(message.payload) as {
+          media?: { mimeType?: string };
+          message?: { document?: { filename?: string } };
+        };
+        if (payload.media?.mimeType?.trim()) {
+          mimeType = payload.media.mimeType.split(';')[0].trim();
+        }
+        preferredFileName = payload.message?.document?.filename?.trim();
+      } catch {
+        // Keep defaults below.
+      }
+    }
+
+    let fileName = defaultMediaFileName(
+      message.type,
+      mimeType,
+      preferredFileName,
+    );
+
+    const credentials =
+      await this.credentialsService.getByBusinessId(idBusiness);
+    if (!this.credentialsService.isConfigured(credentials)) {
+      throw new Error('MS042');
+    }
+
+    const { buffer, mimeType: fetchedMimeType } =
+      await this.metaService.fetchMediaBuffer(credentials!, mediaId);
+    mimeType = fetchedMimeType.split(';')[0].trim() || mimeType;
+    fileName = defaultMediaFileName(
+      message.type,
+      mimeType,
+      preferredFileName,
+    );
+
+    const uploaded = await this.mediaFilesService.uploadConversationMedia(
+      user,
+      message.idConversation,
+      fileName,
+      mimeType,
+      buffer,
+    );
+
+    return {
+      url: uploaded.url,
+      route: uploaded.route,
+      mimeType,
+      fileName: uploaded.fileName || fileName,
+    };
   }
 
   async handleWebhookPayload(body: Record<string, unknown>): Promise<void> {
@@ -409,23 +787,53 @@ export class WhatsAppService {
       return null;
     }
 
-    const waPhone = normalizeColombiaWaPhone(String(msg.from || ''));
-    if (!waPhone) {
+    const identity = resolveInboundSenderIdentity(msg, value);
+    if (!identity) {
       return null;
     }
 
-    const displayName = this.resolveContactDisplayName(value, waPhone);
-    const waUserId = this.resolveContactWaUserId(value, waPhone);
-
     const conversation = await this.findOrCreateConversation(
       idBusiness,
-      waPhone,
-      displayName,
-      waUserId,
+      identity,
     );
 
     const timestamp = Number(msg.timestamp) * 1000 || Date.now();
     const content = extractWhatsAppMessageContent(msg);
+
+    const campaignResponse = await this.resolveCampaignResponse(
+      conversation.id,
+    );
+
+    let payload = JSON.stringify({
+      message: msg,
+      value,
+      media: content.media,
+    });
+
+    if (isInboundMediaMessageType(content.type)) {
+      try {
+        const user = await this.resolveFilesInvokeUser(idBusiness);
+        const uploaded = await this.uploadMessageMediaToStorage(
+          idBusiness,
+          {
+            idConversation: conversation.id,
+            type: content.type,
+            payload,
+          },
+          user,
+        );
+        if (uploaded) {
+          payload = mergeMediaStorageIntoPayload(payload, {
+            url: uploaded.url,
+            route: uploaded.route,
+          });
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Inbound media upload skipped for ${metaMessageId}: ${(err as Error)?.message ?? err}`,
+        );
+      }
+    }
 
     const record: WhatsAppMessage = {
       id: uuidv4(),
@@ -435,20 +843,23 @@ export class WhatsAppService {
       metaMessageId,
       replyToMetaMessageId: content.replyToMetaMessageId,
       direction: 'inbound',
-      waPhone,
+      waPhone: identity.waPhone,
       type: content.type,
       body: content.body,
-      payload: JSON.stringify({
-        message: msg,
-        value,
-        media: content.media,
-      }),
+      payload,
+      ...(campaignResponse
+        ? { idCampaign: campaignResponse.idCampaign, campaignResponse: true }
+        : {}),
       status: 'delivered',
       deliveredAt: timestamp,
       timestamp,
     };
 
     await this.messageModel.create(record);
+
+    if (campaignResponse?.countAsResponse) {
+      await this.campaignStats.increment(campaignResponse.idCampaign, 'responded');
+    }
     await this.touchConversation(
       conversation.id,
       content.body || `[${content.type}]`,
@@ -464,7 +875,7 @@ export class WhatsAppService {
       lastMessagePreview: preview,
       lastInboundAt: timestamp,
       unreadCount,
-      displayName: conversation.displayName || displayName,
+      displayName: conversation.displayName || identity.displayName,
     };
 
     return {
@@ -589,6 +1000,10 @@ export class WhatsAppService {
 
     await this.messageModel.update({ id: existing.id }, update);
 
+    if (existing.idCampaign) {
+      await this.recordCampaignStatusStat(existing, mapped, update);
+    }
+
     return {
       id: existing.id,
       idConversation: existing.idConversation,
@@ -596,6 +1011,30 @@ export class WhatsAppService {
       metaMessageId: existing.metaMessageId,
       ...update,
     };
+  }
+
+  /**
+   * Increments campaign delivery counters once per milestone crossing, using
+   * the previously stored timestamps/status on the message to avoid double
+   * counting when Meta resends the same webhook status.
+   */
+  private async recordCampaignStatusStat(
+    existing: WhatsAppMessage,
+    mapped: WhatsAppMessageStatus,
+    update: Partial<WhatsAppMessage>,
+  ): Promise<void> {
+    const campaignId = existing.idCampaign;
+    if (!campaignId) return;
+
+    if (update.deliveredAt && !existing.deliveredAt) {
+      await this.campaignStats.increment(campaignId, 'delivered');
+    }
+    if (mapped === 'read' && !existing.readAt) {
+      await this.campaignStats.increment(campaignId, 'read');
+    }
+    if (mapped === 'failed' && existing.status !== 'failed') {
+      await this.campaignStats.increment(campaignId, 'failed');
+    }
   }
 
   private mapMetaStatus(status: string): WhatsAppMessageStatus {
@@ -643,10 +1082,14 @@ export class WhatsAppService {
 
   private async findOrCreateConversation(
     idBusiness: string,
-    waPhone: string,
-    displayName?: string,
-    waUserId?: string,
+    identity: {
+      waPhone: string;
+      displayName?: string;
+      waUserId?: string;
+      waUsername?: string;
+    },
   ): Promise<WhatsAppConversation> {
+    const { waPhone, displayName, waUserId, waUsername } = identity;
     const normalizedPhone = normalizeColombiaWaPhone(waPhone);
     const all = await this.conversationModel
       .query('idBusiness')
@@ -656,7 +1099,13 @@ export class WhatsAppService {
 
     const found = all.find((c) => {
       const conv = c.toJSON() as WhatsAppConversation;
-      return normalizeColombiaWaPhone(conv.waPhone) === normalizedPhone;
+      if (waUserId && conv.waUserId === waUserId) {
+        return true;
+      }
+      if (normalizedPhone && !isWhatsAppBsuid(waPhone)) {
+        return normalizeColombiaWaPhone(conv.waPhone) === normalizedPhone;
+      }
+      return conv.waPhone === waPhone;
     });
     if (found) {
       const conv = found.toJSON() as WhatsAppConversation;
@@ -667,8 +1116,14 @@ export class WhatsAppService {
       if (waUserId && !conv.waUserId) {
         updates.waUserId = waUserId;
       }
-      if (conv.waPhone !== normalizedPhone) {
-        updates.waPhone = normalizedPhone;
+      if (waUsername && !conv.waUsername) {
+        updates.waUsername = waUsername;
+      }
+      const storedPhone = isWhatsAppBsuid(waPhone)
+        ? waPhone
+        : normalizedPhone || waPhone;
+      if (storedPhone && conv.waPhone !== storedPhone) {
+        updates.waPhone = storedPhone;
       }
       if (Object.keys(updates).length) {
         await this.conversationModel.update({ id: conv.id }, updates);
@@ -677,13 +1132,19 @@ export class WhatsAppService {
       return conv;
     }
 
+    const storedPhone = isWhatsAppBsuid(waPhone)
+      ? waPhone
+      : normalizedPhone || waPhone;
+    const fallbackName =
+      displayName || waUsername || storedPhone;
     const now = Date.now();
     const conversation: WhatsAppConversation = {
       id: uuidv4(),
       idBusiness,
-      waPhone: normalizedPhone,
-      displayName: displayName || normalizedPhone,
+      waPhone: storedPhone,
+      displayName: fallbackName,
       ...(waUserId ? { waUserId } : {}),
+      ...(waUsername ? { waUsername } : {}),
       lastMessageAt: now,
       lastMessagePreview: '',
     };
@@ -740,43 +1201,6 @@ export class WhatsAppService {
     }
     await this.conversationModel.update({ id: conversation.id }, updates);
     return { ...conversation, ...updates };
-  }
-
-  private resolveContactDisplayName(
-    value: Record<string, any>,
-    waPhone: string,
-  ): string | undefined {
-    const normalizedPhone = normalizeColombiaWaPhone(waPhone);
-    const contacts = value.contacts as
-      | Array<{ wa_id?: string; profile?: { name?: string } }>
-      | undefined;
-
-    const match = contacts?.find(
-      (contact) =>
-        normalizeColombiaWaPhone(String(contact.wa_id ?? '')) ===
-        normalizedPhone,
-    );
-
-    return match?.profile?.name?.trim() || undefined;
-  }
-
-  private resolveContactWaUserId(
-    value: Record<string, any>,
-    waPhone: string,
-  ): string | undefined {
-    const normalizedPhone = normalizeColombiaWaPhone(waPhone);
-    const contacts = value.contacts as
-      | Array<{ wa_id?: string; user_id?: string }>
-      | undefined;
-
-    const match = contacts?.find(
-      (contact) =>
-        normalizeColombiaWaPhone(String(contact.wa_id ?? '')) ===
-        normalizedPhone,
-    );
-
-    const userId = match?.user_id?.trim();
-    return userId || undefined;
   }
 
   private async touchConversation(
@@ -854,6 +1278,42 @@ export class WhatsAppService {
     return resolved;
   }
 
+  /**
+   * Determines whether a new inbound message should be tagged as a campaign
+   * response: the most recent outbound message in the conversation must belong
+   * to a campaign. `countAsResponse` is true only the first time the contact
+   * replies to that campaign (so the campaign "responded" counter is unique
+   * per conversation).
+   */
+  private async resolveCampaignResponse(
+    idConversation: string,
+  ): Promise<{ idCampaign: string; countAsResponse: boolean } | null> {
+    const rows = await this.messageModel
+      .query('idConversation')
+      .eq(idConversation)
+      .using('idConversation-timestamp-index')
+      .exec();
+
+    const messages = rows
+      .map((r) => r.toJSON() as WhatsAppMessage)
+      .sort((a, b) => b.timestamp - a.timestamp);
+
+    const lastOutbound = messages.find((m) => m.direction === 'outbound');
+    const idCampaign = lastOutbound?.idCampaign;
+    if (!lastOutbound || !idCampaign) {
+      return null;
+    }
+
+    const alreadyResponded = messages.some(
+      (m) =>
+        m.direction === 'inbound' &&
+        m.campaignResponse === true &&
+        m.idCampaign === idCampaign,
+    );
+
+    return { idCampaign, countAsResponse: !alreadyResponded };
+  }
+
   private async findLastInboundTimestamp(
     idConversation: string,
   ): Promise<number | undefined> {
@@ -895,12 +1355,17 @@ export class WhatsAppService {
   private async registerSingleTemplate(
     credentials: WhatsAppIntegrationData,
     wabaId: string,
-    item: RegisterTemplateItemDto,
+    item: RegisterTemplateItemDto & { namesToDelete?: string[] },
   ): Promise<TemplateRegistrationResultDto> {
     const name = sanitizeMetaTemplateName(item.name);
     const language = normalizeMetaTemplateLanguage(item.language);
-    const conversion = convertVyvaBodyToMeta(item.body);
+    const bodyConversion = convertVyvaBodyToMeta(item.body);
+    const headerText = item.header?.trim();
+    const headerConversion = headerText
+      ? convertVyvaBodyToMeta(headerText)
+      : null;
     const validation = validateVyvaTemplateBody(item.body);
+    const footerText = item.footer?.trim();
 
     if (!isValidMetaTemplateName(item.name)) {
       return {
@@ -930,8 +1395,35 @@ export class WhatsAppService {
       };
     }
 
-    const variableCount = countMetaTemplateVariables(conversion.metaBody);
-    if (variableCount > 0 && conversion.bodyExamples.length !== variableCount) {
+    if (headerText && headerText.length > 60) {
+      return {
+        key: item.key,
+        name,
+        success: false,
+        error: 'El encabezado supera 60 caracteres (límite de Meta).',
+      };
+    }
+
+    if (footerText && footerText.length > 60) {
+      return {
+        key: item.key,
+        name,
+        success: false,
+        error: 'El pie de página supera 60 caracteres (límite de Meta).',
+      };
+    }
+
+    if (footerText && /\{\{/.test(footerText)) {
+      return {
+        key: item.key,
+        name,
+        success: false,
+        error: 'El pie de página no puede contener variables.',
+      };
+    }
+
+    const variableCount = countMetaTemplateVariables(bodyConversion.metaBody);
+    if (variableCount > 0 && bodyConversion.bodyExamples.length !== variableCount) {
       return {
         key: item.key,
         name,
@@ -941,41 +1433,118 @@ export class WhatsAppService {
       };
     }
 
-    try {
-      await this.metaService.deleteMessageTemplateByName(
-        credentials,
-        wabaId,
+    const headerVariableCount = headerConversion
+      ? countMetaTemplateVariables(headerConversion.metaBody)
+      : 0;
+    if (
+      headerVariableCount > 0 &&
+      headerConversion!.bodyExamples.length !== headerVariableCount
+    ) {
+      return {
+        key: item.key,
         name,
+        success: false,
+        error:
+          'Faltan ejemplos para las variables del encabezado requeridas por Meta.',
+      };
+    }
+
+    const buttons = (item.buttons ?? [])
+      .map((button) => {
+        if (button.type === 'QUICK_REPLY') {
+          return { type: 'QUICK_REPLY' as const, text: button.text };
+        }
+        if (!button.url?.trim()) {
+          return null;
+        }
+        return {
+          type: 'URL' as const,
+          text: button.text,
+          url: button.url.trim(),
+        };
+      })
+      .filter(
+        (
+          button,
+        ): button is
+          | { type: 'URL'; text: string; url: string }
+          | { type: 'QUICK_REPLY'; text: string } => button !== null,
       );
+
+    const namesToDelete = [
+      ...new Set([name, ...(item.namesToDelete ?? [])].map(sanitizeMetaTemplateName)),
+    ];
+
+    for (const deleteName of namesToDelete) {
+      try {
+        await this.metaService.deleteMessageTemplateByName(
+          credentials,
+          wabaId,
+          deleteName,
+        );
+      } catch {
+        // Best effort: Meta may not have this template name yet.
+      }
+    }
+
+    const createTemplate = async (
+      registerName: string,
+    ): Promise<TemplateRegistrationResultDto> => {
+      try {
+        await this.metaService.deleteMessageTemplateByName(
+          credentials,
+          wabaId,
+          registerName,
+        );
+      } catch {
+        // Best effort before create.
+      }
 
       const created = await this.metaService.createMessageTemplate(
         credentials,
         wabaId,
         {
-          name,
+          name: registerName,
           language,
           category: item.category,
-          bodyText: conversion.metaBody,
-          bodyExamples: conversion.bodyExamples,
+          headerText: headerConversion?.metaBody || undefined,
+          headerExamples: headerConversion?.bodyExamples,
+          bodyText: bodyConversion.metaBody,
+          bodyExamples: bodyConversion.bodyExamples,
+          footerText: footerText || undefined,
+          buttons: buttons.length ? buttons : undefined,
         },
       );
 
       return {
         key: item.key,
-        name,
+        name: registerName,
         success: true,
         status: created.status,
         metaTemplateId: created.id,
       };
+    };
+
+    try {
+      return await createTemplate(name);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Error al registrar en Meta';
-      return {
-        key: item.key,
-        name,
-        success: false,
-        error: message,
-      };
+      const fallbackName = buildMetaTemplateFallbackName(name);
+      try {
+        return await createTemplate(fallbackName);
+      } catch (fallbackErr) {
+        const message =
+          fallbackErr instanceof Error
+            ? fallbackErr.message
+            : err instanceof Error
+              ? err.message
+              : 'Error al registrar en Meta';
+        return {
+          key: item.key,
+          name,
+          success: false,
+          error: message,
+        };
+      }
     }
   }
 
@@ -1012,8 +1581,19 @@ export class WhatsAppService {
   async listTemplateCatalog(
     idBusiness: string,
   ): Promise<GenericResponse<WhatsAppTemplateCatalogItem[]>> {
-    const { config } = await this.loadMessageConfigDomain(idBusiness);
+    const { config: loaded, domainId } =
+      await this.loadMessageConfigDomain(idBusiness);
     const metaTemplates = await this.fetchMetaTemplatesForEnrichment(idBusiness);
+
+    let config = loaded;
+    if (metaTemplates?.length) {
+      const synced = syncWhatsAppMetaStateFromMeta(config, metaTemplates);
+      config = synced.config;
+      if (synced.changed) {
+        await this.saveMessageConfigDomain(idBusiness, config, domainId);
+      }
+    }
+
     const items = buildWhatsAppTemplateCatalog(config, metaTemplates);
     return new GenericResponse(items);
   }
@@ -1038,11 +1618,27 @@ export class WhatsAppService {
   ): Promise<GenericResponse<WhatsAppTemplateSaveResult>> {
     const { config: loaded, domainId } =
       await this.loadMessageConfigDomain(idBusiness);
+
+    const vyvaValidation = validateVyvaTemplateBody(dto.body.trim());
+    if (!vyvaValidation.valid) {
+      this.logger.warn(
+        `Template validation failed for ${key}: ${vyvaValidation.errors.join(' ')}`,
+      );
+      return this.handledErrorResponse<WhatsAppTemplateSaveResult>(
+        vyvaValidation.errors.join(' '),
+      );
+    }
+
     let config = applyTemplateSaveToConfig(loaded, key, dto);
-    const { kind } = resolveTemplateKind(config, key);
+    const { kind, custom: previousCustom } = resolveTemplateKind(loaded, key);
+    const storedMetaName =
+      kind === 'appointment'
+        ? loaded.appointmentMeta?.[key as AppointmentTemplateKey]?.name
+        : previousCustom?.meta?.name;
+    const { kind: savedKind } = resolveTemplateKind(config, key);
     const metaCategory =
       dto.metaCategory ??
-      (kind === 'appointment'
+      (savedKind === 'appointment'
         ? 'UTILITY'
         : config.customTemplates?.find((template) => template.key === key)
             ?.metaCategory ?? 'UTILITY');
@@ -1052,22 +1648,32 @@ export class WhatsAppService {
 
     const creds = await this.credentialsService.getByBusinessId(idBusiness);
     const integrationConfigured = this.credentialsService.isConfigured(creds);
+    const shouldRegisterWithMeta =
+      integrationConfigured &&
+      templateRequiresMetaRegistration(loaded, key, dto);
 
-    if (integrationConfigured) {
-      const vyvaValidation = validateVyvaTemplateBody(dto.body.trim());
-      if (!vyvaValidation.valid) {
-        this.logger.warn(
-          `Template validation failed for ${key}: ${vyvaValidation.errors.join(' ')}`,
-        );
-        return this.handledErrorResponse<WhatsAppTemplateSaveResult>('MS014');
-      }
+    let metaRegistered = false;
+    let metaError: string | undefined;
 
+    await this.saveMessageConfigDomain(idBusiness, config, domainId);
+
+    if (shouldRegisterWithMeta) {
       const wabaId = await this.metaService.getWabaIdForBusiness(creds!);
       const metaName = resolveMetaRegistrationName(config, key);
       if (!isValidMetaTemplateName(metaName)) {
         this.logger.warn(`Invalid Meta template name for ${key}: ${metaName}`);
-        return this.handledErrorResponse<WhatsAppTemplateSaveResult>('MS014');
+        return this.handledErrorResponse<WhatsAppTemplateSaveResult>(
+          'Nombre de plantilla inválido para Meta.',
+        );
       }
+
+      const metaTemplatesForCleanup =
+        (await this.fetchMetaTemplatesForEnrichment(idBusiness)) ?? [];
+      const namesToDelete = collectRelatedMetaTemplateNames(
+        metaName,
+        metaTemplatesForCleanup,
+        [storedMetaName, metaName],
+      );
 
       const result = await this.registerSingleTemplate(creds!, wabaId, {
         key,
@@ -1075,14 +1681,11 @@ export class WhatsAppService {
         language,
         category: metaCategory,
         body: dto.body.trim(),
+        header: dto.header,
+        footer: dto.footer,
+        buttons: dto.buttons,
+        namesToDelete,
       });
-
-      if (!result.success) {
-        this.logger.warn(
-          `Meta template registration failed for ${key}: ${result.error ?? 'unknown error'}`,
-        );
-        return this.handledErrorResponse<WhatsAppTemplateSaveResult>('MS014');
-      }
 
       config = applyRegistrationResultToConfig(
         config,
@@ -1091,11 +1694,28 @@ export class WhatsAppService {
         metaCategory,
         language,
       );
+      metaRegistered = result.success;
+      if (!result.success) {
+        metaError = result.error;
+        this.logger.warn(
+          `Meta template registration failed for ${key}: ${result.error ?? 'unknown error'}`,
+        );
+      }
+
+      await this.saveMessageConfigDomain(idBusiness, config, domainId);
     }
 
-    await this.saveMessageConfigDomain(idBusiness, config, domainId);
-
     const metaTemplates = await this.fetchMetaTemplatesForEnrichment(idBusiness);
+    if (metaTemplates?.length) {
+      if (metaRegistered) {
+        const synced = syncWhatsAppConfigFromMeta(config, metaTemplates);
+        config = synced.config;
+      } else {
+        config = applyTemplateMetaStateFromMeta(config, key, metaTemplates);
+      }
+      await this.saveMessageConfigDomain(idBusiness, config, domainId);
+    }
+
     const detail = buildWhatsAppTemplateEditorDetail(config, key, metaTemplates);
     if (!detail) {
       throw new Error('MS007');
@@ -1106,9 +1726,19 @@ export class WhatsAppService {
       kind: detail.kind,
       displayBody: detail.displayBody,
       domainBody: detail.domainBody,
+      domainHeader: detail.domainHeader,
+      domainFooter: detail.domainFooter,
+      domainButtons: detail.domainButtons,
       meta: detail.meta,
-      metaRegistered: integrationConfigured,
+      metaRegistered,
+      metaError,
       appointmentMeta: detail.appointmentMeta,
+      dateFormat: detail.dateFormat,
+      timeFormat: detail.timeFormat,
+      metaLanguage: detail.metaLanguage,
+      title: detail.title,
+      description: detail.description,
+      metaCategory: detail.metaCategory,
     });
   }
 
@@ -1277,6 +1907,193 @@ export class WhatsAppService {
 
     await this.credentialsService.markMetaPaymentMethodConfirmed(idBusiness);
     return new GenericResponse({ metaPaymentMethodConfirmed: true });
+  }
+
+  async ensureNotificationTemplates(
+    idBusiness: string,
+    dto: EnsureNotificationTemplatesDto,
+  ): Promise<GenericResponse<{ templateErrors?: string[] }>> {
+    const creds = await this.credentialsService.getByBusinessId(idBusiness);
+    if (!this.credentialsService.isConfigured(creds)) {
+      throw new Error('MS042');
+    }
+
+    const templateErrors: string[] = [];
+
+    if (dto.unansweredMessages === true) {
+      const result = await this.ensureNotificationTemplateExists(
+        idBusiness,
+        NOTIFICATION_TEMPLATE_KEYS.unansweredMessages,
+      );
+      if (result && !result.success) {
+        templateErrors.push(
+          result.error ??
+            'No se pudo crear la plantilla de mensajes sin responder.',
+        );
+      }
+    }
+
+    if (dto.sales === true) {
+      const result = await this.ensureNotificationTemplateExists(
+        idBusiness,
+        NOTIFICATION_TEMPLATE_KEYS.sales,
+      );
+      if (result && !result.success) {
+        templateErrors.push(
+          result.error ?? 'No se pudo crear la plantilla de ventas.',
+        );
+      }
+    }
+
+    if (templateErrors.length) {
+      throw new BadRequestException(
+        new GenericResponse(
+          { templateErrors },
+          false,
+          templateErrors[0],
+          true,
+          undefined,
+          HttpStatus.BAD_REQUEST,
+        ),
+      );
+    }
+
+    return new GenericResponse({
+      templateErrors: undefined,
+    });
+  }
+
+  async loadSendNotificationsSettings(
+    idBusiness: string,
+  ): Promise<WhatsAppNotificationSettings> {
+    return this.loadNotificationSettingsFromDomain(idBusiness);
+  }
+
+  private async ensureNotificationTemplateExists(
+    idBusiness: string,
+    key: NotificationTemplateKey,
+  ): Promise<TemplateRegistrationResultDto | null> {
+    const baseUrl = (process.env.FRONTEND_URL ?? '').replace(/\/$/, '');
+    const definitions = buildNotificationTemplateDefinitions({
+      chatUrl: `${baseUrl}/b/crm/chat`,
+      salesUrl: `${baseUrl}/b/sales`,
+    });
+    const definition = definitions[key];
+
+    const { config: loaded, domainId } =
+      await this.loadMessageConfigDomain(idBusiness);
+    const metaTemplates =
+      (await this.fetchMetaTemplatesForEnrichment(idBusiness)) ?? [];
+    const language = loaded.metaLanguage?.trim() || 'es';
+    const { custom } = resolveTemplateKind(loaded, key);
+    const storedMetaName = custom?.meta?.name;
+    const canonicalMetaName = definition.metaName;
+    const existingMetaTemplate = findMetaTemplateByName(
+      metaTemplates,
+      storedMetaName || canonicalMetaName,
+      language,
+    );
+    const needsRegistration =
+      templateRequiresMetaRegistration(loaded, key, {
+        body: definition.body,
+        header: definition.header,
+        footer: definition.footer,
+        buttons: definition.buttons,
+        metaCategory: 'UTILITY',
+      }) || existingMetaTemplate?.status === 'REJECTED';
+
+    if (
+      !needsRegistration &&
+      existingMetaTemplate &&
+      (existingMetaTemplate.status === 'APPROVED' ||
+        existingMetaTemplate.status === 'PENDING')
+    ) {
+      return null;
+    }
+
+    let config = applyTemplateSaveToConfig(loaded, key, {
+      body: definition.body,
+      header: definition.header,
+      footer: definition.footer,
+      buttons: definition.buttons,
+      title: definition.title,
+      description: definition.description,
+      metaCategory: 'UTILITY',
+      metaLanguage: loaded.metaLanguage ?? 'es',
+    });
+    config.customTemplates = (config.customTemplates ?? []).map((item) =>
+      item.key === key
+        ? {
+            ...item,
+            meta: {
+              ...item.meta,
+              name: canonicalMetaName,
+              language,
+              category: 'UTILITY',
+            },
+          }
+        : item,
+    );
+    await this.saveMessageConfigDomain(idBusiness, config, domainId);
+
+    const creds = await this.credentialsService.getByBusinessId(idBusiness);
+    if (!this.credentialsService.isConfigured(creds)) {
+      return null;
+    }
+
+    const wabaId = await this.metaService.getWabaIdForBusiness(creds!);
+    const body = getTemplateDomainBody(config, key) || definition.body;
+    const layout = getTemplateLayout(config, key);
+    const namesToDelete = collectRelatedMetaTemplateNames(
+      canonicalMetaName,
+      metaTemplates,
+      [storedMetaName, canonicalMetaName],
+    );
+    const result = await this.registerSingleTemplate(creds!, wabaId, {
+      key,
+      name: canonicalMetaName,
+      language,
+      category: 'UTILITY',
+      body,
+      header: layout.header,
+      footer: layout.footer,
+      buttons: layout.buttons,
+      namesToDelete,
+    });
+
+    config = applyRegistrationResultToConfig(
+      config,
+      key,
+      result,
+      'UTILITY',
+      language,
+    );
+    await this.saveMessageConfigDomain(idBusiness, config, domainId);
+    return result;
+  }
+
+  private async loadNotificationSettingsFromDomain(
+    idBusiness: string,
+  ): Promise<WhatsAppNotificationSettings> {
+    const domains = await this.domainModel
+      .query('idBusiness')
+      .eq(idBusiness)
+      .using('domain-idBusiness-index')
+      .where('group')
+      .eq(WHATSAPP_NOTIFICATION_SETTINGS_GROUP)
+      .exec();
+
+    if (!domains?.length) {
+      return { ...DEFAULT_WHATSAPP_NOTIFICATION_SETTINGS };
+    }
+
+    const record = domains[0].toJSON() as Domain;
+    try {
+      const parsed = JSON.parse(record.value ?? '{}') as Partial<WhatsAppNotificationSettings>;
+      return normalizeWhatsAppNotificationSettings(parsed);
+    } catch {
+      return { ...DEFAULT_WHATSAPP_NOTIFICATION_SETTINGS };
+    }
   }
 
   async addTestUser(
@@ -1725,8 +2542,45 @@ export class WhatsAppService {
       profilePictureHandle,
     });
 
+    try {
+      if (dto.deleteUsername === true) {
+        await this.metaService.deleteBusinessUsername(creds);
+      } else {
+        const requestedUsername = dto.username?.trim().replace(/^@/, '');
+        if (requestedUsername) {
+          const current = await this.metaService.getBusinessUsername(creds);
+          const currentUsername = current.username?.trim().replace(/^@/, '');
+          if (requestedUsername !== currentUsername) {
+            await this.metaService.updateBusinessUsername(
+              creds,
+              requestedUsername,
+              dto.transferAction,
+            );
+          }
+        }
+      }
+    } catch (err) {
+      const metaErrorCode = (err as { metaErrorCode?: number }).metaErrorCode;
+      throw new BadRequestException({
+        message:
+          err instanceof Error
+            ? err.message
+            : 'No se pudo actualizar el nombre de usuario de WhatsApp.',
+        metaErrorCode,
+      });
+    }
+
     const profile = await this.metaService.getFullBusinessProfile(creds);
     return new GenericResponse(profile);
+  }
+
+  async getBusinessUsernameSuggestions(
+    idBusiness: string,
+  ): Promise<GenericResponse<string[]>> {
+    const creds = await this.requireConfiguredCredentials(idBusiness);
+    const suggestions =
+      await this.metaService.getBusinessUsernameSuggestions(creds);
+    return new GenericResponse(suggestions);
   }
 
   private parseProfilePictureBase64(dataUrl: string): {
@@ -1786,15 +2640,76 @@ export class WhatsAppService {
     idBusiness: string,
     dto: SendWhatsAppTemplateDto,
   ): Promise<GenericResponse<WhatsAppMessage>> {
+    const appointmentBusinessId =
+      dto.appointmentBusinessId?.trim() || idBusiness;
+    const isAppointmentMode = Boolean(
+      dto.appointmentTemplateKey && dto.appointmentContext,
+    );
+
     const existingByClient = await this.findByClientMessageId(
       dto.clientMessageId,
     );
-    if (existingByClient && existingByClient.idBusiness === idBusiness) {
-      return new GenericResponse(existingByClient);
+    if (
+      existingByClient &&
+      existingByClient.idBusiness === appointmentBusinessId &&
+      existingByClient.status !== 'failed'
+    ) {
+      const success =
+        existingByClient.status !== 'pending' ||
+        Boolean(existingByClient.metaMessageId);
+      return new GenericResponse(
+        existingByClient,
+        success,
+        success
+          ? 'Consulta realizada con éxito.'
+          : 'El mensaje aún está en cola de envío.',
+        !success,
+      );
     }
 
-    const credentials =
-      await this.credentialsService.getByBusinessId(idBusiness);
+    let credentialsBusinessId = idBusiness;
+    let templateName = dto.templateName?.trim() ?? '';
+    let languageCode = dto.languageCode?.trim() ?? '';
+    let bodyParameters = dto.bodyParameters ?? [];
+    let templateBodyForValidation = dto.templateBody;
+    let resolvedPlan: AppointmentTemplateSendPlan | null = null;
+
+    if (isAppointmentMode) {
+      resolvedPlan = await this.resolveAppointmentTemplateSendPlan(
+        appointmentBusinessId,
+        dto.appointmentTemplateKey!,
+        dto.appointmentContext!,
+      );
+      if (!resolvedPlan) {
+        return new GenericResponse(
+          undefined as unknown as WhatsAppMessage,
+          false,
+          'No hay plantilla WhatsApp aprobada para esta notificación',
+          true,
+        );
+      }
+
+      if (resolvedPlan.resolvedTemplateKey !== resolvedPlan.requestedTemplateKey) {
+        this.logger.warn(
+          `Appointment template fallback: ${resolvedPlan.requestedTemplateKey} -> ${resolvedPlan.resolvedTemplateKey} ` +
+            `(business=${appointmentBusinessId}, whatsappBusiness=${resolvedPlan.whatsappBusinessId})`,
+        );
+      }
+
+      credentialsBusinessId = resolvedPlan.whatsappBusinessId;
+      templateName = resolvedPlan.templateName;
+      languageCode = resolvedPlan.languageCode;
+      bodyParameters = resolvedPlan.bodyParameters;
+      templateBodyForValidation = templateBodyForValidation ?? resolvedPlan.metaBody;
+    } else if (!templateName || !languageCode) {
+      throw new BadRequestException(
+        'templateName y languageCode son requeridos',
+      );
+    }
+
+    const credentials = await this.credentialsService.getByBusinessId(
+      credentialsBusinessId,
+    );
     if (!this.credentialsService.isConfigured(credentials)) {
       throw new Error('MS042');
     }
@@ -1804,25 +2719,31 @@ export class WhatsAppService {
       const row = await this.conversationModel.get({ id: dto.idConversation });
       if (row) {
         const c = row.toJSON() as WhatsAppConversation;
-        if (c.idBusiness === idBusiness) {
+        if (c.idBusiness === appointmentBusinessId) {
           conversation = c;
         }
       }
     }
 
-    const waPhone = normalizeColombiaWaPhone(
-      dto.waPhone || conversation?.waPhone || '',
-    );
-    if (!waPhone) {
+    const waPhoneInput = dto.waPhone || conversation?.waPhone || '';
+    const recipient = conversation
+      ? resolveWhatsAppMessageRecipient(conversation)
+      : resolveWhatsAppMessageRecipient({ waPhone: waPhoneInput });
+    if (!recipient.phone && !recipient.userId) {
       throw new Error('MS043');
     }
+    const storageWaPhone =
+      normalizeColombiaWaPhone(waPhoneInput) ||
+      conversation?.waPhone?.trim() ||
+      recipient.userId ||
+      recipient.phone ||
+      '';
 
     if (!conversation) {
-      conversation = await this.findOrCreateConversation(
-        idBusiness,
-        waPhone,
-        dto.displayName,
-      );
+      conversation = await this.findOrCreateConversation(appointmentBusinessId, {
+        waPhone: storageWaPhone,
+        displayName: dto.displayName,
+      });
     }
 
     conversation = await this.applyConversationCustomerLink(
@@ -1831,32 +2752,75 @@ export class WhatsAppService {
       dto.displayName,
     );
 
-    const bodyParameters = dto.bodyParameters ?? [];
+    const parameterValidation = validateCampaignTemplateParameters(
+      bodyParameters,
+      {
+        bodyFieldMapping: dto.bodyFieldMapping,
+        templateBody: templateBodyForValidation,
+      },
+    );
     const now = Date.now();
     const messageId = uuidv4();
+
+    if (!parameterValidation.valid) {
+      const validationMessage =
+        parameterValidation.message ??
+        'Faltan datos requeridos para la plantilla.';
+      const failedMessage: WhatsAppMessage = {
+        id: messageId,
+        idConversation: conversation.id,
+        idBusiness: appointmentBusinessId,
+        idCustomer: conversation.idCustomer ?? dto.idCustomer,
+        clientMessageId: dto.clientMessageId,
+        direction: 'outbound',
+        waPhone: storageWaPhone,
+        type: 'template',
+        ...(dto.idCampaign ? { idCampaign: dto.idCampaign } : {}),
+        body: validationMessage,
+        payload: JSON.stringify({
+          templateName,
+          languageCode,
+          bodyParameters,
+          validationError: true,
+        }),
+        status: 'failed' as WhatsAppMessageStatus,
+        statusErrors: this.buildStatusErrorsJson(validationMessage),
+        timestamp: now,
+      };
+
+      await this.messageModel.create(failedMessage);
+      return new GenericResponse(
+        failedMessage,
+        false,
+        validationMessage,
+        true,
+      );
+    }
+
     const bodyPreview = await this.resolveRenderedTemplateBody(
-      idBusiness,
+      credentialsBusinessId,
       credentials!,
-      dto.templateName,
-      dto.languageCode,
+      templateName,
+      languageCode,
       bodyParameters,
-      dto.templateBody?.trim(),
+      templateBodyForValidation?.trim(),
       dto.bodyPreview?.trim(),
     );
 
     const pending: WhatsAppMessage = {
       id: messageId,
       idConversation: conversation.id,
-      idBusiness,
+      idBusiness: appointmentBusinessId,
       idCustomer: conversation.idCustomer ?? dto.idCustomer,
       clientMessageId: dto.clientMessageId,
       direction: 'outbound',
-      waPhone,
+      waPhone: storageWaPhone,
       type: 'template',
+      ...(dto.idCampaign ? { idCampaign: dto.idCampaign } : {}),
       body: bodyPreview,
       payload: JSON.stringify({
-        templateName: dto.templateName,
-        languageCode: dto.languageCode,
+        templateName,
+        languageCode,
         bodyParameters,
       }),
       status: 'pending',
@@ -1868,9 +2832,9 @@ export class WhatsAppService {
     try {
       const { metaMessageId } = await this.metaService.sendTemplateMessage(
         credentials!,
-        waPhone,
-        dto.templateName,
-        dto.languageCode,
+        recipient,
+        templateName,
+        languageCode,
         bodyParameters,
       );
 
@@ -1888,7 +2852,7 @@ export class WhatsAppService {
       const saved = await this.messageModel.get({ id: messageId });
       const savedMsg = saved?.toJSON() as WhatsAppMessage;
       await this.publishRealtimeMessage(
-        idBusiness,
+        appointmentBusinessId,
         savedMsg,
         conversation,
         now,
@@ -1896,12 +2860,88 @@ export class WhatsAppService {
       );
       return new GenericResponse(savedMsg);
     } catch (err) {
+      // If Meta rejected a non-pending appointment template, retry once with the `pending` fallback.
+      if (
+        isAppointmentMode &&
+        resolvedPlan &&
+        resolvedPlan.resolvedTemplateKey !== 'pending' &&
+        dto.appointmentContext
+      ) {
+        const fallback = await this.tryAppointmentPendingFallback(
+          resolvedPlan.whatsappBusinessId,
+          dto.appointmentContext,
+        );
+        if (fallback) {
+          this.logger.warn(
+            `Meta rejected template "${resolvedPlan.templateName}" (key=${resolvedPlan.resolvedTemplateKey}); ` +
+              `retrying with pending fallback "${fallback.plan.templateName}"`,
+          );
+          try {
+            const fallbackCreds = await this.credentialsService.getByBusinessId(
+              fallback.plan.whatsappBusinessId,
+            );
+            if (this.credentialsService.isConfigured(fallbackCreds)) {
+              const { metaMessageId } =
+                await this.metaService.sendTemplateMessage(
+                  fallbackCreds!,
+                  recipient,
+                  fallback.plan.templateName,
+                  fallback.plan.languageCode,
+                  fallback.plan.bodyParameters,
+                );
+              await this.messageModel.update(
+                { id: messageId },
+                {
+                  metaMessageId,
+                  status: 'sent' as WhatsAppMessageStatus,
+                  sentAt: Date.now(),
+                  body: fallback.bodyPreview,
+                },
+              );
+              await this.touchConversation(
+                conversation.id,
+                fallback.bodyPreview,
+                now,
+              );
+              const saved = await this.messageModel.get({ id: messageId });
+              const savedMsg = saved?.toJSON() as WhatsAppMessage;
+              await this.publishRealtimeMessage(
+                appointmentBusinessId,
+                savedMsg,
+                conversation,
+                now,
+                fallback.bodyPreview,
+              );
+              return new GenericResponse(savedMsg);
+            }
+          } catch (fallbackErr) {
+            this.logger.warn(
+              `Pending fallback also failed (key=${resolvedPlan.resolvedTemplateKey}): ` +
+                `${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`,
+            );
+          }
+        }
+      }
+
+      const detail = this.formatMetaErrorMessage(err);
       await this.messageModel.update(
         { id: messageId },
-        { status: 'failed' as WhatsAppMessageStatus },
+        {
+          status: 'failed' as WhatsAppMessageStatus,
+          statusErrors: this.buildStatusErrorsJson(detail),
+        },
       );
       return this.metaErrorResponse(err, null as unknown as WhatsAppMessage);
     }
+  }
+
+  private buildStatusErrorsJson(detail: string): string {
+    return JSON.stringify([
+      {
+        message: detail,
+        error_data: { details: detail },
+      },
+    ]);
   }
 
   private async publishRealtimeMessage(
@@ -2110,5 +3150,126 @@ export class WhatsAppService {
     }
 
     return raw;
+  }
+
+  private async tryAppointmentPendingFallback(
+    whatsappBusinessId: string,
+    context: AppointmentTemplateContextDto,
+  ): Promise<{
+    plan: AppointmentTemplateSendPlan;
+    bodyPreview: string;
+  } | null> {
+    try {
+      const { config: loaded } =
+        await this.loadMessageConfigDomain(whatsappBusinessId);
+      const config = normalizeWhatsAppMessageConfig(loaded);
+      const plan = buildAppointmentTemplateSendPlan(
+        config,
+        whatsappBusinessId,
+        'pending',
+        {
+          customerName: context.customerName,
+          serviceName: context.serviceName,
+          employeeName: context.employeeName,
+          startDate: context.startDate,
+          endDate: context.endDate,
+          greetingAt: Date.now(),
+        },
+      );
+      if (!plan) return null;
+      const bodyPreview =
+        plan.metaBody ||
+        this.buildTemplatePreview(plan.templateName, plan.bodyParameters);
+      return { plan, bodyPreview };
+    } catch (err) {
+      this.logger.warn(
+        `tryAppointmentPendingFallback failed for ${whatsappBusinessId}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  private async resolveAppointmentTemplateSendPlan(
+    appointmentBusinessId: string,
+    templateKey: AppointmentTemplateKey,
+    context: AppointmentTemplateContextDto,
+  ): Promise<AppointmentTemplateSendPlan | null> {
+    const settings =
+      await this.loadNotificationSettingsFromDomain(appointmentBusinessId);
+
+    const appointmentDomain =
+      await this.loadMessageConfigDomain(appointmentBusinessId);
+    const hasOwnIntegration = businessHasWhatsAppMessageConfig(
+      appointmentDomain.config,
+      appointmentDomain.domainId,
+    );
+
+    const whatsappBusinessId = resolveWhatsAppBusinessIdForAppointment(
+      settings,
+      appointmentBusinessId,
+      process.env.VYVAPOS_ID_BUSINESS?.trim(),
+      hasOwnIntegration,
+    );
+
+    let { config: loaded } =
+      await this.loadMessageConfigDomain(whatsappBusinessId);
+    let config = normalizeWhatsAppMessageConfig(loaded);
+
+    if (
+      templateKey === 'booking' &&
+      !resolveSendableAppointmentTemplateMeta(config, 'booking')
+    ) {
+      await this.ensureBookingTemplateRegistered(whatsappBusinessId, config);
+      const reloaded = await this.loadMessageConfigDomain(whatsappBusinessId);
+      config = normalizeWhatsAppMessageConfig(reloaded.config);
+    }
+
+    const plan = buildAppointmentTemplateSendPlan(
+      config,
+      whatsappBusinessId,
+      templateKey,
+      {
+        customerName: context.customerName,
+        serviceName: context.serviceName,
+        employeeName: context.employeeName,
+        startDate: context.startDate,
+        endDate: context.endDate,
+        greetingAt: Date.now(),
+      },
+    );
+
+    this.logger.log(
+      `AppointmentTemplateSendPlan: key=${templateKey} business=${whatsappBusinessId} ` +
+        `template=${plan?.templateName ?? 'null'} lang=${plan?.languageCode ?? 'null'}`,
+    );
+
+    return plan;
+  }
+
+  private async ensureBookingTemplateRegistered(
+    whatsappBusinessId: string,
+    config: WhatsAppMessageConfig,
+  ): Promise<void> {
+    if (resolveSendableAppointmentTemplateMeta(config, 'booking')) {
+      return;
+    }
+
+    const bookingBody = config.messages?.booking?.trim();
+    if (!bookingBody) {
+      return;
+    }
+
+    const result = await this.saveTemplate(whatsappBusinessId, 'booking', {
+      body: bookingBody,
+      metaLanguage: config.metaLanguage?.trim() || 'es',
+      metaCategory: 'UTILITY',
+    });
+
+    if (result.success === false) {
+      this.logger.warn(
+        `Booking template re-registration failed for ${whatsappBusinessId}: ${result.message ?? 'unknown error'}`,
+      );
+    }
   }
 }

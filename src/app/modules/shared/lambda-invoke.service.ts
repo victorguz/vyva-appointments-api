@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
+import * as jwt from 'jsonwebtoken';
 import { User } from 'src/app/schemas/user.schema';
 
 @Injectable()
@@ -13,15 +14,23 @@ export class LambdaInvokeService {
     this.lambdaClient = new LambdaClient({ region });
   }
 
-  /**
-   * Invoke a Lambda function with HTTP method, path, and body
-   * @param lambdaName Lambda function name (without stage suffix)
-   * @param method HTTP method (GET, POST, PUT, etc.)
-   * @param path API path
-   * @param body Request body
-   * @param user User object for JWT token generation
-   * @returns Promise with Lambda response
-   */
+  private signUserToken(user: User): string {
+    const secret = this.configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new Error('JWT_SECRET not configured');
+    }
+    return jwt.sign(
+      {
+        sub: user.id,
+        email: user.email,
+        role: (user as any).role,
+        idBusiness: user.idBusiness,
+      },
+      secret,
+      { expiresIn: '1h' },
+    );
+  }
+
   async invokeFunction(
     lambdaName: string,
     method: string,
@@ -32,36 +41,34 @@ export class LambdaInvokeService {
     try {
       const stage = this.configService.get<string>('NODE_ENV') || 'qas';
       const fullLambdaName = `${lambdaName}-${stage}-api`;
-
-      const edgeUserContext = JSON.stringify({
-        sub: user.id,
-        idBusiness: user.idBusiness,
-        role: (user as any).role,
-        email: user.email,
-        authType: 'jwt',
-      });
+      const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+      const bearer = this.signUserToken(user);
 
       const event = {
         httpMethod: method,
-        path: path.startsWith('/') ? path : `/${path}`,
+        path: normalizedPath,
         headers: {
           'Content-Type': 'application/json',
-          'x-vyva-user': edgeUserContext,
+          Authorization: `Bearer ${bearer}`,
         },
         multiValueHeaders: {} as Record<string, string[]>,
-        queryStringParameters: {} as Record<string, string>,
+        queryStringParameters: null as null,
         multiValueQueryStringParameters: null as null,
         pathParameters: null as null,
         stageVariables: null as null,
-        requestContext: {} as any,
-        resource: '',
+        requestContext: {
+          stage,
+          path: normalizedPath,
+          httpMethod: method,
+        },
+        resource: normalizedPath,
         isBase64Encoded: false,
-        body: JSON.stringify(body),
+        body: body ? JSON.stringify(body) : undefined,
       };
 
       const command = new InvokeCommand({
         FunctionName: fullLambdaName,
-        InvocationType: 'RequestResponse', // Synchronous
+        InvocationType: 'RequestResponse',
         Payload: Buffer.from(JSON.stringify(event)),
       });
 
@@ -70,12 +77,10 @@ export class LambdaInvokeService {
       if (response.Payload) {
         const payload = JSON.parse(Buffer.from(response.Payload).toString());
 
-        // Handle Lambda error response
         if (payload.errorMessage) {
           throw new Error(payload.errorMessage);
         }
 
-        // Parse the response body if it exists
         if (payload.body) {
           return JSON.parse(payload.body);
         }

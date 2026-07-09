@@ -33,6 +33,13 @@ export interface WhatsAppTemplateEditorDetail {
   metaCategory: WhatsAppMetaCategory;
   displayBody: string;
   domainBody: string;
+  domainHeader?: string;
+  domainFooter?: string;
+  domainButtons?: Array<{
+    type: 'URL' | 'QUICK_REPLY';
+    text: string;
+    url?: string;
+  }>;
   meta: WhatsAppTemplateMetaSnapshot | null;
   appointmentMeta?: WhatsAppTemplateMetaState;
 }
@@ -42,14 +49,34 @@ export interface WhatsAppTemplateSaveResult {
   kind: 'appointment' | 'custom';
   displayBody: string;
   domainBody: string;
+  domainHeader?: string;
+  domainFooter?: string;
+  domainButtons?: Array<{
+    type: 'URL' | 'QUICK_REPLY';
+    text: string;
+    url?: string;
+  }>;
   meta: WhatsAppTemplateMetaSnapshot | null;
   metaRegistered: boolean;
   metaError?: string;
   appointmentMeta?: WhatsAppTemplateMetaState;
+  dateFormat?: string;
+  timeFormat?: string;
+  metaLanguage?: string;
+  title?: string;
+  description?: string;
+  metaCategory?: WhatsAppMetaCategory;
 }
 
 export interface SaveWhatsAppTemplatePayload {
   body: string;
+  header?: string;
+  footer?: string;
+  buttons?: Array<{
+    type: 'URL' | 'QUICK_REPLY';
+    text: string;
+    url?: string;
+  }>;
   title?: string;
   description?: string;
   metaCategory?: WhatsAppMetaCategory;

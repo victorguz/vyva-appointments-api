@@ -1,7 +1,9 @@
 import {
   MetaTemplateSyncSource,
   WhatsAppMessageConfig,
+  WhatsAppTemplateButton,
   WhatsAppTemplateItem,
+  WhatsAppTemplateLayout,
   WhatsAppTemplateMetaState,
   WhatsAppTemplateMetaStatus,
 } from './whatsapp-message-config.types';
@@ -17,6 +19,7 @@ import {
   AppointmentTemplateKey,
   convertMetaBodyToVyva,
   customTemplateMetaName,
+  findMetaTemplateByCandidates,
   normalizeWhatsAppMessageConfig,
   resolveCustomMetaTemplateName,
 } from './whatsapp-message-config.util';
@@ -47,11 +50,28 @@ export function findMetaTemplateByName(
   name: string,
   preferredLanguage: string,
 ): MetaTemplateSyncSource | undefined {
+  // Exact-name lookup only. Prefix/fallback matching is handled by
+  // findMetaTemplateByCandidates / resolveAppointmentCatalogMetaTemplate.
   return (
     metaTemplates.find(
       (template) =>
         template.name === name && template.language === preferredLanguage,
     ) ?? metaTemplates.find((template) => template.name === name)
+  );
+}
+
+function resolveAppointmentCatalogMetaTemplate(
+  metaTemplates: MetaTemplateSyncSource[],
+  key: AppointmentTemplateKey,
+  stored: WhatsAppTemplateMetaState | undefined,
+  preferredLanguage: string,
+): MetaTemplateSyncSource | undefined {
+  const canonicalName = APPOINTMENT_META_TEMPLATE_NAMES[key];
+  return findMetaTemplateByCandidates(
+    metaTemplates,
+    [stored?.name, canonicalName],
+    preferredLanguage,
+    { prefixBases: [canonicalName, stored?.name] },
   );
 }
 
@@ -78,6 +98,29 @@ export function buildMetaSnapshot(
         )
       : 0,
   };
+}
+
+function buildMetaSnapshotFromStored(
+  stored?: WhatsAppTemplateMetaState,
+): WhatsAppTemplateMetaSnapshot | null {
+  if (!stored?.status && !stored?.name) {
+    return null;
+  }
+
+  return {
+    exists: Boolean(stored.status),
+    name: stored.name,
+    status: normalizeMetaStatus(stored.status),
+    language: stored.language,
+    category: stored.category,
+  };
+}
+
+function resolveCatalogMetaSnapshot(
+  metaTemplate: MetaTemplateSyncSource | undefined,
+  stored?: WhatsAppTemplateMetaState,
+): WhatsAppTemplateMetaSnapshot | null {
+  return buildMetaSnapshot(metaTemplate) ?? buildMetaSnapshotFromStored(stored);
 }
 
 function resolveMetaNameForKey(
@@ -109,6 +152,42 @@ export function resolveTemplateKind(
   return { kind: 'custom', custom };
 }
 
+function normalizeButtons(
+  buttons?: WhatsAppTemplateButton[],
+): WhatsAppTemplateButton[] | undefined {
+  const normalized = (buttons ?? [])
+    .map((button) => ({
+      type: button.type,
+      text: button.text?.trim() ?? '',
+      url: button.url?.trim() || undefined,
+    }))
+    .filter((button) => button.text);
+  return normalized.length ? normalized : undefined;
+}
+
+function layoutSignature(layout?: WhatsAppTemplateLayout): string {
+  return JSON.stringify({
+    header: layout?.header?.trim() ?? '',
+    footer: layout?.footer?.trim() ?? '',
+    buttons: normalizeButtons(layout?.buttons) ?? [],
+  });
+}
+
+export function getTemplateLayout(
+  config: WhatsAppMessageConfig,
+  key: string,
+): WhatsAppTemplateLayout {
+  const { kind, custom } = resolveTemplateKind(config, key);
+  if (kind === 'appointment') {
+    return config.appointmentTemplateLayout?.[key as AppointmentTemplateKey] ?? {};
+  }
+  return {
+    header: custom?.header,
+    footer: custom?.footer,
+    buttons: custom?.buttons,
+  };
+}
+
 export function buildWhatsAppTemplateCatalog(
   rawConfig: WhatsAppMessageConfig,
   metaTemplates: MetaTemplateSyncSource[] | null,
@@ -118,9 +197,14 @@ export function buildWhatsAppTemplateCatalog(
   const items: WhatsAppTemplateCatalogItem[] = [];
 
   for (const key of APPOINTMENT_TEMPLATE_KEYS) {
-    const metaName = APPOINTMENT_META_TEMPLATE_NAMES[key];
+    const storedMeta = config.appointmentMeta?.[key];
     const metaTemplate = metaTemplates
-      ? findMetaTemplateByName(metaTemplates, metaName, preferredLanguage)
+      ? resolveAppointmentCatalogMetaTemplate(
+          metaTemplates,
+          key,
+          storedMeta,
+          preferredLanguage,
+        )
       : undefined;
     const domainBody = config.messages[key] ?? '';
 
@@ -129,14 +213,19 @@ export function buildWhatsAppTemplateCatalog(
       kind: 'appointment',
       title: APPOINTMENT_TITLES[key],
       description: domainBody,
-      meta: buildMetaSnapshot(metaTemplate),
+      meta: resolveCatalogMetaSnapshot(metaTemplate, storedMeta),
     });
   }
 
   for (const custom of config.customTemplates ?? []) {
     const metaName = resolveCustomMetaTemplateName(custom);
     const metaTemplate = metaTemplates
-      ? findMetaTemplateByName(metaTemplates, metaName, preferredLanguage)
+      ? findMetaTemplateByCandidates(
+          metaTemplates,
+          [custom.meta?.name, metaName],
+          preferredLanguage,
+          { prefixBases: [metaName, custom.meta?.name] },
+        )
       : undefined;
 
     items.push({
@@ -144,7 +233,7 @@ export function buildWhatsAppTemplateCatalog(
       kind: 'custom',
       title: custom.title?.trim() || 'Plantilla personalizada',
       description: custom.description?.trim() || custom.body,
-      meta: buildMetaSnapshot(metaTemplate),
+      meta: resolveCatalogMetaSnapshot(metaTemplate, custom.meta),
     });
   }
 
@@ -161,6 +250,9 @@ export function buildWhatsAppTemplateEditorDetail(
   const preferredLanguage = config.metaLanguage?.trim() || 'es';
 
   let domainBody: string;
+  let domainHeader: string | undefined;
+  let domainFooter: string | undefined;
+  let domainButtons: WhatsAppTemplateButton[] | undefined;
   let title: string;
   let description: string;
   let metaCategory: WhatsAppTemplateItem['metaCategory'] = 'UTILITY';
@@ -169,12 +261,19 @@ export function buildWhatsAppTemplateEditorDetail(
   if (kind === 'appointment') {
     const appointmentKey = key as AppointmentTemplateKey;
     domainBody = config.messages[appointmentKey] ?? '';
+    const layout = config.appointmentTemplateLayout?.[appointmentKey];
+    domainHeader = layout?.header;
+    domainFooter = layout?.footer;
+    domainButtons = layout?.buttons;
     title = APPOINTMENT_TITLES[appointmentKey];
     description = domainBody;
     appointmentMeta = config.appointmentMeta?.[appointmentKey];
     metaCategory = appointmentMeta?.category ?? 'UTILITY';
   } else if (custom) {
     domainBody = custom.body;
+    domainHeader = custom.header;
+    domainFooter = custom.footer;
+    domainButtons = custom.buttons;
     title = custom.title?.trim() || 'Plantilla personalizada';
     description = custom.description?.trim() || custom.body;
     metaCategory = custom.metaCategory ?? custom.meta?.category ?? 'UTILITY';
@@ -185,7 +284,19 @@ export function buildWhatsAppTemplateEditorDetail(
 
   const metaName = resolveMetaNameForKey(config, key, kind, custom);
   const metaTemplate = metaTemplates
-    ? findMetaTemplateByName(metaTemplates, metaName, preferredLanguage)
+    ? kind === 'appointment'
+      ? resolveAppointmentCatalogMetaTemplate(
+          metaTemplates,
+          key as AppointmentTemplateKey,
+          appointmentMeta,
+          preferredLanguage,
+        )
+      : findMetaTemplateByCandidates(
+          metaTemplates,
+          [appointmentMeta?.name, metaName],
+          preferredLanguage,
+          { prefixBases: [metaName, appointmentMeta?.name] },
+        )
     : undefined;
   const metaSnapshot = buildMetaSnapshot(metaTemplate);
   const displayBody =
@@ -204,6 +315,9 @@ export function buildWhatsAppTemplateEditorDetail(
     metaCategory,
     displayBody,
     domainBody,
+    domainHeader,
+    domainFooter,
+    domainButtons,
     meta: metaSnapshot,
     appointmentMeta,
   };
@@ -217,6 +331,11 @@ export function applyTemplateSaveToConfig(
   const config = normalizeWhatsAppMessageConfig(rawConfig);
   const { kind, custom } = resolveTemplateKind(config, key);
   const body = payload.body.trim();
+  const layout: WhatsAppTemplateLayout = {
+    header: payload.header?.trim() || undefined,
+    footer: payload.footer?.trim() || undefined,
+    buttons: normalizeButtons(payload.buttons),
+  };
 
   if (payload.dateFormat?.trim()) {
     config.dateFormat = payload.dateFormat.trim();
@@ -231,6 +350,10 @@ export function applyTemplateSaveToConfig(
   if (kind === 'appointment') {
     const appointmentKey = key as AppointmentTemplateKey;
     config.messages = { ...config.messages, [appointmentKey]: body };
+    config.appointmentTemplateLayout = {
+      ...(config.appointmentTemplateLayout ?? {}),
+      [appointmentKey]: layout,
+    };
     return config;
   }
 
@@ -246,6 +369,9 @@ export function applyTemplateSaveToConfig(
             title,
             description,
             body,
+            header: layout.header,
+            footer: layout.footer,
+            buttons: layout.buttons,
             metaCategory,
           }
         : item,
@@ -261,10 +387,132 @@ export function applyTemplateSaveToConfig(
       title,
       description,
       body,
+      header: layout.header,
+      footer: layout.footer,
+      buttons: layout.buttons,
       metaCategory,
     },
   ];
   return config;
+}
+
+export function getTemplateDomainBody(
+  config: WhatsAppMessageConfig,
+  key: string,
+): string {
+  const { kind, custom } = resolveTemplateKind(config, key);
+  if (kind === 'appointment') {
+    return (config.messages[key as AppointmentTemplateKey] ?? '').trim();
+  }
+  return (custom?.body ?? '').trim();
+}
+
+export function templateRequiresMetaRegistration(
+  config: WhatsAppMessageConfig,
+  key: string,
+  payload: Pick<
+    SaveWhatsAppTemplatePayload,
+    'body' | 'metaCategory' | 'header' | 'footer' | 'buttons'
+  >,
+): boolean {
+  const previousBody = getTemplateDomainBody(config, key);
+  if (previousBody !== payload.body.trim()) {
+    return true;
+  }
+
+  const previousLayout = getTemplateLayout(config, key);
+  const nextLayout: WhatsAppTemplateLayout = {
+    header: payload.header?.trim() || undefined,
+    footer: payload.footer?.trim() || undefined,
+    buttons: normalizeButtons(payload.buttons),
+  };
+  if (layoutSignature(previousLayout) !== layoutSignature(nextLayout)) {
+    return true;
+  }
+
+  const { kind, custom } = resolveTemplateKind(config, key);
+  const existingMeta =
+    kind === 'appointment'
+      ? config.appointmentMeta?.[key as AppointmentTemplateKey]
+      : custom?.meta;
+
+  if (!existingMeta?.metaTemplateId && !existingMeta?.lastRegisteredAt) {
+    return true;
+  }
+
+  if (kind === 'custom' && payload.metaCategory) {
+    const previousCategory =
+      custom?.metaCategory ?? existingMeta?.category ?? 'UTILITY';
+    if (payload.metaCategory !== previousCategory) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/** Updates stored Meta linkage (status, name, …) without overwriting the domain body. */
+export function applyTemplateMetaStateFromMeta(
+  config: WhatsAppMessageConfig,
+  key: string,
+  metaTemplates: MetaTemplateSyncSource[],
+): WhatsAppMessageConfig {
+  if (!metaTemplates.length) {
+    return config;
+  }
+
+  const next = normalizeWhatsAppMessageConfig(config);
+  const { kind, custom } = resolveTemplateKind(next, key);
+  const preferredLanguage = next.metaLanguage?.trim() || 'es';
+  const existingMeta =
+    kind === 'appointment'
+      ? next.appointmentMeta?.[key as AppointmentTemplateKey]
+      : custom?.meta;
+  const metaName = resolveMetaNameForKey(next, key, kind, custom);
+  const metaTemplate =
+    kind === 'appointment'
+      ? resolveAppointmentCatalogMetaTemplate(
+          metaTemplates,
+          key as AppointmentTemplateKey,
+          existingMeta,
+          preferredLanguage,
+        )
+      : findMetaTemplateByCandidates(
+          metaTemplates,
+          [existingMeta?.name, metaName],
+          preferredLanguage,
+          { prefixBases: [metaName, existingMeta?.name] },
+        );
+  if (!metaTemplate) {
+    return config;
+  }
+
+  const meta: WhatsAppTemplateMetaState = {
+    ...existingMeta,
+    name: metaTemplate.name,
+    language: metaTemplate.language,
+    category:
+      (metaTemplate.category as WhatsAppTemplateMetaState['category']) ??
+      existingMeta?.category ??
+      'UTILITY',
+    status: normalizeMetaStatus(metaTemplate.status) ?? existingMeta?.status,
+    metaTemplateId: existingMeta?.metaTemplateId,
+    lastRegisteredAt: existingMeta?.lastRegisteredAt,
+    lastError: existingMeta?.lastError,
+  };
+
+  if (kind === 'appointment') {
+    next.appointmentMeta = {
+      ...next.appointmentMeta,
+      [key as AppointmentTemplateKey]: meta,
+    };
+    return next;
+  }
+
+  next.customTemplates = (next.customTemplates ?? []).map((template) =>
+    template.key === key ? { ...template, meta } : template,
+  );
+  return next;
 }
 
 export function resolveMetaRegistrationName(

@@ -38,7 +38,9 @@ import {
   SaveWhatsAppMessageConfigDto,
   SaveWhatsAppTemplateDto,
   SaveWhatsAppTestUserDto,
+  EnsureNotificationTemplatesDto,
   UpdateWhatsAppBusinessProfileDto,
+  CampaignMessageRowDto,
 } from './dto/whatsapp.dto';
 import {
   WhatsAppTemplateSummary,
@@ -196,6 +198,19 @@ export class WhatsAppController {
     );
   }
 
+  @Get('campaigns/:idCampaign/messages')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'List outbound messages (with delivery state) for a campaign',
+  })
+  listCampaignMessages(
+    @Param('idCampaign') idCampaign: string,
+    @Req() req: Request,
+  ): Promise<GenericResponse<CampaignMessageRowDto[]>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.listCampaignMessages(idBusiness, idCampaign);
+  }
+
   @Post('messages')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Send a WhatsApp text message' })
@@ -205,6 +220,25 @@ export class WhatsAppController {
   ): Promise<GenericResponse<WhatsAppMessage>> {
     const idBusiness = (req as any)['idBusiness'] as string;
     return this.whatsAppService.sendMessage(idBusiness, dto);
+  }
+
+  @Get('messages/:idMessage/media')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary:
+      'Resolve inbound WhatsApp message media URL (lazy upload to S3 on first access)',
+  })
+  getMessageMedia(
+    @Param('idMessage') idMessage: string,
+    @Req() req: Request,
+  ): Promise<
+    GenericResponse<{ url: string; mimeType: string; fileName: string }>
+  > {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    const user = (req as any)['user'] as User;
+    return this.whatsAppService
+      .resolveMessageMediaUrl(idBusiness, idMessage, user)
+      .then((data) => new GenericResponse(data));
   }
 
   @Get('templates')
@@ -382,6 +416,20 @@ export class WhatsAppController {
     return this.whatsAppService.confirmMetaPaymentMethod(idBusiness);
   }
 
+  @Post('integration/ensure-notification-templates')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary:
+      'Register WhatsApp notification templates in Meta when toggles are enabled',
+  })
+  ensureNotificationTemplates(
+    @Body() dto: EnsureNotificationTemplatesDto,
+    @Req() req: Request,
+  ) {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.ensureNotificationTemplates(idBusiness, dto);
+  }
+
   @Post('integration/meta-oauth-callback')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({
@@ -449,6 +497,18 @@ export class WhatsAppController {
   ): Promise<GenericResponse<WhatsAppBusinessProfile>> {
     const idBusiness = (req as any)['idBusiness'] as string;
     return this.whatsAppService.updateBusinessProfile(idBusiness, dto);
+  }
+
+  @Get('integration/business-profile/username-suggestions')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary: 'Get reserved WhatsApp business username suggestions from Meta',
+  })
+  getBusinessUsernameSuggestions(
+    @Req() req: Request,
+  ): Promise<GenericResponse<string[]>> {
+    const idBusiness = (req as any)['idBusiness'] as string;
+    return this.whatsAppService.getBusinessUsernameSuggestions(idBusiness);
   }
 }
 

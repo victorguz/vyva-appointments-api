@@ -10,6 +10,8 @@ export interface WhatsAppConversation extends WhatsAppConversationKey {
   idCustomer?: string;
   displayName?: string;
   waUserId?: string;
+  /** WhatsApp @username from webhook contacts[].profile.username. */
+  waUsername?: string;
   lastMessageAt: number;
   lastMessagePreview?: string;
   /** Last inbound (customer) message timestamp (ms). Drives the 24h service window. */
@@ -49,6 +51,10 @@ export const WhatsAppConversationSchema = new Schema(
       required: false,
     },
     waUserId: {
+      type: String,
+      required: false,
+    },
+    waUsername: {
       type: String,
       required: false,
     },

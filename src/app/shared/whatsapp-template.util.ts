@@ -11,17 +11,35 @@ export interface MetaTemplateValidation {
   errors: string[];
 }
 
-const VYVA_VAR_PATTERN = /\{\{(\w+)\}\}/g;
+const VYVA_VAR_NAME = String.raw`[\p{L}_][\p{L}\p{N}_]*`;
+export const VYVA_VAR_PATTERN = new RegExp(String.raw`\{\{(${VYVA_VAR_NAME})\}\}`, 'gu');
+const ANY_VYVA_PLACEHOLDER = /\{\{([^}]*)\}\}/g;
+
+function isValidVyvaVariableName(name: string): boolean {
+  return new RegExp(`^${VYVA_VAR_NAME}$`, 'u').test(name);
+}
+
+function hasInvalidVyvaPlaceholders(body: string): boolean {
+  for (const match of body.matchAll(ANY_VYVA_PLACEHOLDER)) {
+    if (!isValidVyvaVariableName(match[1])) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const DEFAULT_EXAMPLES: Record<string, string> = {
   customerName: 'Valery',
   serviceName: 'Limpieza Facial',
   employeeName: 'Ana Martínez',
-  date: '25/12/2024',
+  date: 'miércoles, 25 de dic.',
   startTime: '02:30 PM',
   endTime: '03:30 PM',
   greeting: 'buenos días',
   time: '02:30 PM',
+  unreadCount: '8',
+  orderNumber: '#1247',
+  totalAmount: '$285.000',
 };
 
 export function convertVyvaBodyToMeta(
@@ -83,7 +101,7 @@ export function validateMetaTemplateBody(metaBody: string): MetaTemplateValidati
 
   if (/\{\{[^}\d][^}]*\}\}/.test(metaBody)) {
     errors.push(
-      'El mensaje contiene variables con formato inválido. Usa las variables de Vyva (por ejemplo {{customerName}}).',
+      'Revisa el formato de las variables. Usa {{nombre}} con letras, números o guión bajo (por ejemplo {{cliente}} o {{precio_total}}).',
     );
   }
 
@@ -91,7 +109,21 @@ export function validateMetaTemplateBody(metaBody: string): MetaTemplateValidati
 }
 
 export function validateVyvaTemplateBody(body: string): MetaTemplateValidation {
-  const conversion = convertVyvaBodyToMeta(body);
+  const trimmed = body.trim();
+  if (!trimmed) {
+    return { valid: false, errors: ['El mensaje no puede estar vacío.'] };
+  }
+
+  if (hasInvalidVyvaPlaceholders(trimmed)) {
+    return {
+      valid: false,
+      errors: [
+        'Revisa el formato de las variables. Usa {{nombre}} con letras, números o guión bajo (por ejemplo {{cliente}} o {{precio_total}}).',
+      ],
+    };
+  }
+
+  const conversion = convertVyvaBodyToMeta(trimmed);
   return validateMetaTemplateBody(conversion.metaBody);
 }
 
@@ -121,6 +153,45 @@ export function sanitizeMetaTemplateName(name: string): string {
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '')
     .slice(0, 512);
+}
+
+export function generateShortMetaTemplateUid(length = 6): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let index = 0; index < length; index += 1) {
+    result += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return result;
+}
+
+export function buildMetaTemplateFallbackName(baseName: string): string {
+  const sanitized = sanitizeMetaTemplateName(baseName);
+  const suffix = `_${generateShortMetaTemplateUid()}`;
+  const maxBaseLength = Math.max(1, 512 - suffix.length);
+  return `${sanitized.slice(0, maxBaseLength)}${suffix}`;
+}
+
+export function collectRelatedMetaTemplateNames(
+  baseName: string,
+  metaTemplates: Array<{ name: string }> | null | undefined,
+  extraNames: Array<string | undefined> = [],
+): string[] {
+  const prefix = sanitizeMetaTemplateName(baseName);
+  const names = new Set<string>([prefix]);
+
+  for (const rawName of extraNames) {
+    if (rawName?.trim()) {
+      names.add(sanitizeMetaTemplateName(rawName));
+    }
+  }
+
+  for (const template of metaTemplates ?? []) {
+    if (template.name === prefix || template.name.startsWith(`${prefix}_`)) {
+      names.add(template.name);
+    }
+  }
+
+  return [...names];
 }
 
 export function isValidMetaTemplateName(name: string): boolean {

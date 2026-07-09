@@ -84,26 +84,38 @@ export function mergeWhatsAppIntegrationData(
   existing: WhatsAppIntegrationData,
   incoming: Partial<WhatsAppIntegrationData>,
 ): WhatsAppIntegrationData {
+  const incomingHasFullCredentials =
+    !hasMaskedWhatsAppCredentials(incoming) &&
+    !!String(incoming.phoneNumberId ?? '').trim() &&
+    !!String(incoming.accessToken ?? '').trim() &&
+    !!String(incoming.appSecret ?? '').trim();
+
+  const base = incomingHasFullCredentials
+    ? { ...incoming }
+    : { ...existing, ...incoming };
+
   return normalizeWhatsAppIntegrationData({
+    ...base,
     phoneNumberId: isPlaceholderPhoneNumberId(incoming.phoneNumberId)
       ? existing.phoneNumberId
-      : String(incoming.phoneNumberId ?? '').trim(),
+      : String(
+          incoming.phoneNumberId ??
+            (base as WhatsAppIntegrationData).phoneNumberId ??
+            '',
+        ).trim(),
     accessToken: isPlaceholderSecret(incoming.accessToken)
       ? existing.accessToken
-      : String(incoming.accessToken ?? '').trim(),
+      : String(
+          incoming.accessToken ??
+            (base as WhatsAppIntegrationData).accessToken ??
+            '',
+        ).trim(),
     appSecret: isPlaceholderSecret(incoming.appSecret)
       ? existing.appSecret
-      : String(incoming.appSecret ?? '').trim(),
-    phoneRegistered: incoming.phoneRegistered ?? existing.phoneRegistered,
-    metaPaymentMethodConfirmed:
-      incoming.metaPaymentMethodConfirmed ?? existing.metaPaymentMethodConfirmed,
-    useCredentials: incoming.useCredentials ?? existing.useCredentials,
-    useSystemUserTokenForPhoneVerification:
-      incoming.useSystemUserTokenForPhoneVerification ??
-      existing.useSystemUserTokenForPhoneVerification,
-    twoStepPin: incoming.twoStepPin ?? existing.twoStepPin,
-    metaEmbeddedSignup: incoming.metaEmbeddedSignup ?? existing.metaEmbeddedSignup,
-  });
+      : String(
+          incoming.appSecret ?? (base as WhatsAppIntegrationData).appSecret ?? '',
+        ).trim(),
+  } as WhatsAppIntegrationData);
 }
 
 function isWhatsAppPreferenceOnlyUpdate(

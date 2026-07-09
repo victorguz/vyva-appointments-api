@@ -24,6 +24,10 @@ export interface WhatsAppMessage extends WhatsAppMessageKey {
   type: string;
   body?: string;
   payload?: string;
+  /** Marketing campaign this message belongs to (outbound) or replies to (inbound). */
+  idCampaign?: string;
+  /** True on an inbound message that is a reply to a campaign outbound message. */
+  campaignResponse?: boolean;
   status: WhatsAppMessageStatus;
   /** Meta webhook status timestamps (ms). */
   sentAt?: number;
@@ -101,6 +105,19 @@ export const WhatsAppMessageSchema = new Schema(
     },
     replyToMetaMessageId: {
       type: String,
+      required: false,
+    },
+    idCampaign: {
+      type: String,
+      required: false,
+      index: {
+        type: 'global',
+        name: 'idCampaign-timestamp-index',
+        rangeKey: 'timestamp',
+      },
+    },
+    campaignResponse: {
+      type: Boolean,
       required: false,
     },
     sentAt: {

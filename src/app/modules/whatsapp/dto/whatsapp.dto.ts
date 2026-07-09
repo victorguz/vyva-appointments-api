@@ -13,6 +13,7 @@ import {
   IsBoolean,
   Max,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -104,6 +105,31 @@ export class WhatsAppTemplateDto {
   bodyParameterCount: number;
 }
 
+export class AppointmentTemplateContextDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  customerName?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  serviceName?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  employeeName?: string;
+
+  @ApiProperty({ description: 'ISO string or epoch milliseconds' })
+  @IsNotEmpty()
+  startDate!: string | number;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  endDate?: string | number;
+}
+
 export class SendWhatsAppTemplateDto {
   @ApiProperty({ required: false })
   @IsOptional()
@@ -115,15 +141,26 @@ export class SendWhatsAppTemplateDto {
   @IsString()
   waPhone?: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    required: false,
+    description:
+      'Required unless appointmentTemplateKey and appointmentContext are provided',
+  })
+  @ValidateIf((dto) => !dto.appointmentTemplateKey)
   @IsString()
   @IsNotEmpty()
-  templateName: string;
+  templateName?: string;
 
-  @ApiProperty({ example: 'es' })
+  @ApiProperty({
+    example: 'es',
+    required: false,
+    description:
+      'Required unless appointmentTemplateKey and appointmentContext are provided',
+  })
+  @ValidateIf((dto) => !dto.appointmentTemplateKey)
   @IsString()
   @IsNotEmpty()
-  languageCode: string;
+  languageCode?: string;
 
   @ApiProperty({ required: false, type: [String] })
   @IsOptional()
@@ -145,6 +182,15 @@ export class SendWhatsAppTemplateDto {
   @IsString()
   templateBody?: string;
 
+  @ApiProperty({
+    required: false,
+    description: 'CSV column names mapped to each template variable (same order)',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  bodyFieldMapping?: string[];
+
   @ApiProperty({ description: 'Client idempotency key' })
   @IsString()
   @IsNotEmpty()
@@ -159,6 +205,84 @@ export class SendWhatsAppTemplateDto {
   @IsOptional()
   @IsString()
   displayName?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Marketing campaign id this template message belongs to',
+  })
+  @IsOptional()
+  @IsString()
+  idCampaign?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Appointment owner business id; whatsapp-api resolves templates, routing and message body',
+  })
+  @IsOptional()
+  @IsUUID()
+  appointmentBusinessId?: string;
+
+  @ApiProperty({
+    required: false,
+    enum: ['booking', 'pending', 'confirmed', 'completed'],
+    description:
+      'When set with appointmentContext, whatsapp-api builds templateName, languageCode and bodyParameters',
+  })
+  @IsOptional()
+  @IsIn(['booking', 'pending', 'confirmed', 'completed'])
+  appointmentTemplateKey?: 'booking' | 'pending' | 'confirmed' | 'completed';
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Raw appointment data; whatsapp-api formats variables from whatsappMessages domain config',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AppointmentTemplateContextDto)
+  appointmentContext?: AppointmentTemplateContextDto;
+}
+
+export class CampaignMessageRowDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  idConversation: string;
+
+  @ApiProperty()
+  waPhone: string;
+
+  @ApiProperty({ required: false })
+  displayName?: string;
+
+  @ApiProperty({ required: false })
+  idCustomer?: string;
+
+  @ApiProperty({ required: false })
+  body?: string;
+
+  @ApiProperty({ description: 'pending | sent | delivered | read | failed' })
+  status: string;
+
+  @ApiProperty({ required: false })
+  sentAt?: number;
+
+  @ApiProperty({ required: false })
+  deliveredAt?: number;
+
+  @ApiProperty({ required: false })
+  readAt?: number;
+
+  @ApiProperty({ description: 'Whether the contact replied to the campaign' })
+  responded: boolean;
+
+  @ApiProperty({ required: false, description: 'Meta delivery error summary' })
+  errorMessage?: string;
+
+  @ApiProperty()
+  timestamp: number;
 }
 
 export class LinkWhatsAppConversationCustomerDto {
@@ -170,6 +294,23 @@ export class LinkWhatsAppConversationCustomerDto {
   @IsOptional()
   @IsString()
   displayName?: string;
+}
+
+export class RegisterTemplateButtonDto {
+  @ApiProperty({ enum: ['URL', 'QUICK_REPLY'] })
+  @IsString()
+  @IsIn(['URL', 'QUICK_REPLY'])
+  type: 'URL' | 'QUICK_REPLY';
+
+  @ApiProperty({ example: 'Ir al chat' })
+  @IsString()
+  @IsNotEmpty()
+  text: string;
+
+  @ApiProperty({ example: 'https://app.vyvapos.com/b/crm/chat', required: false })
+  @IsOptional()
+  @IsString()
+  url?: string;
 }
 
 export class RegisterTemplateItemDto {
@@ -197,6 +338,35 @@ export class RegisterTemplateItemDto {
   @IsString()
   @IsNotEmpty()
   body: string;
+
+  @ApiProperty({ required: false, description: 'Meta HEADER text (max 60 chars)' })
+  @IsOptional()
+  @IsString()
+  header?: string;
+
+  @ApiProperty({ required: false, description: 'Meta FOOTER text (max 60 chars)' })
+  @IsOptional()
+  @IsString()
+  footer?: string;
+
+  @ApiProperty({ type: [RegisterTemplateButtonDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RegisterTemplateButtonDto)
+  buttons?: RegisterTemplateButtonDto[];
+}
+
+export class EnsureNotificationTemplatesDto {
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  unansweredMessages?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  sales?: boolean;
 }
 
 export class RegisterTemplatesBatchDto {
@@ -307,6 +477,32 @@ export class UpdateWhatsAppBusinessProfileDto {
   @IsOptional()
   @IsString()
   newDisplayName?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'WhatsApp @username (without @ prefix)',
+  })
+  @IsOptional()
+  @IsString()
+  username?: string;
+
+  @ApiProperty({
+    required: false,
+    enum: ['none', 'force_transfer'],
+    description:
+      'When the username is in use on another phone in the portfolio, use force_transfer to move it',
+  })
+  @IsOptional()
+  @IsString()
+  transferAction?: 'none' | 'force_transfer';
+
+  @ApiProperty({
+    required: false,
+    description: 'Remove the current business username',
+  })
+  @IsOptional()
+  @IsBoolean()
+  deleteUsername?: boolean;
 }
 
 export class SaveWhatsAppMessageConfigDto {
@@ -319,6 +515,23 @@ export class SaveWhatsAppTemplateDto {
   @IsString()
   @IsNotEmpty()
   body: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  header?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  footer?: string;
+
+  @ApiProperty({ type: [RegisterTemplateButtonDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RegisterTemplateButtonDto)
+  buttons?: RegisterTemplateButtonDto[];
 
   @ApiProperty({ required: false })
   @IsOptional()

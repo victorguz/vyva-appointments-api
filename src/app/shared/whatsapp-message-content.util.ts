@@ -160,6 +160,133 @@ export function extractWhatsAppMessageContent(
   }
 }
 
+const INBOUND_MEDIA_TYPES = new Set([
+  'image',
+  'audio',
+  'video',
+  'sticker',
+  'document',
+]);
+
+export function isInboundMediaMessageType(type: string): boolean {
+  return INBOUND_MEDIA_TYPES.has(type);
+}
+
+/** Obtiene el mediaId de Meta guardado en payload.media al persistir el mensaje. */
+export function extractMediaIdFromMessagePayload(
+  payloadJson?: string,
+): string | null {
+  if (!payloadJson?.trim()) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(payloadJson) as {
+      media?: { mediaId?: string; id?: string };
+    };
+    const mediaId = payload.media?.mediaId ?? payload.media?.id;
+    return typeof mediaId === 'string' && mediaId.trim() ? mediaId.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** URL S3 persistida tras la primera carga bajo demanda del media. */
+export function extractMediaStorageUrlFromMessagePayload(
+  payloadJson?: string,
+): string | null {
+  if (!payloadJson?.trim()) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(payloadJson) as {
+      media?: { storageUrl?: string; url?: string };
+    };
+    const url = payload.media?.storageUrl ?? payload.media?.url;
+    return typeof url === 'string' && url.trim() ? url.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ruta S3 persistida tras la primera descarga bajo demanda del media. */
+export function extractMediaStorageRouteFromMessagePayload(
+  payloadJson?: string,
+): string | null {
+  if (!payloadJson?.trim()) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(payloadJson) as {
+      media?: { storageRoute?: string; route?: string };
+    };
+    const route = payload.media?.storageRoute ?? payload.media?.route;
+    return typeof route === 'string' && route.trim() ? route.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function mergeMediaStorageIntoPayload(
+  payloadJson: string | undefined,
+  storage: { url: string; route: string },
+): string {
+  let payload: Record<string, unknown> = {};
+  if (payloadJson?.trim()) {
+    try {
+      payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+  }
+
+  const media =
+    payload.media && typeof payload.media === 'object'
+      ? { ...(payload.media as Record<string, unknown>) }
+      : {};
+
+  media.storageUrl = storage.url;
+  media.storageRoute = storage.route;
+  payload.media = media;
+
+  return JSON.stringify(payload);
+}
+
+const MIME_EXTENSION: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/3gpp': '3gp',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
+  'audio/aac': 'aac',
+  'application/pdf': 'pdf',
+};
+
+export function extensionFromMimeType(mimeType: string): string {
+  const normalized = mimeType.split(';')[0].trim().toLowerCase();
+  if (MIME_EXTENSION[normalized]) {
+    return MIME_EXTENSION[normalized];
+  }
+  const subtype = normalized.split('/')[1];
+  return subtype?.replace(/[^a-z0-9]/gi, '') || 'bin';
+}
+
+export function defaultMediaFileName(
+  messageType: string,
+  mimeType: string,
+  preferredName?: string,
+): string {
+  const trimmed = preferredName?.trim();
+  if (trimmed) {
+    return trimmed.replace(/[^a-zA-Z0-9._-]/g, '_');
+  }
+
+  const ext = extensionFromMimeType(mimeType);
+  return `${messageType}.${ext}`;
+}
+
 export function parseWhatsAppStatusErrors(
   statusErrors?: string,
 ): { code?: number; title?: string; message?: string }[] {
