@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
 import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
+import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { User, UserKey } from 'src/app/schemas/user.schema';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -43,6 +44,8 @@ export class AppointmentsService extends TransactionSupport {
     private readonly customerModel: Model<Customer, CustomerKey>,
     @InjectModel('User')
     private readonly userModel: Model<User, UserKey>,
+    @InjectModel('Product')
+    private readonly productModel: Model<Product, ProductKey>,
   ) {
     super();
   }
@@ -53,20 +56,39 @@ export class AppointmentsService extends TransactionSupport {
   private formatServiceNamesSummaryFromServices(
     services: AppointmentService[],
   ): string {
-    const names = services.map((s) => (s.name || '').trim()).filter(Boolean);
-    if (names.length === 0) return '';
-    const maxPerName = 28;
-    const ellipsis = '\u2026';
-    const dot = '\u00b7';
-    const truncate = (t: string) =>
-      t.length <= maxPerName
-        ? t
-        : t.slice(0, Math.max(0, maxPerName - 1)) + ellipsis;
-    const parts = names.map(truncate);
-    const joined = parts.join(', ');
-    return names.length > 1
-      ? `${joined} ${dot} ${names.length} \u00edtems`
-      : joined;
+    return services
+      .map((service) => (service.name || '').trim())
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  private async resolveServiceNames(
+    services: AppointmentService[],
+    idBusiness?: string,
+  ): Promise<AppointmentService[]> {
+    return Promise.all(
+      services.map(async (service) => {
+        let name = (service.name || '').trim();
+
+        try {
+          const product = await this.productModel.get({ id: service.id });
+          if (
+            product &&
+            (!idBusiness || product.idBusiness === idBusiness)
+          ) {
+            name =
+              product.publicName?.trim() || product.name?.trim() || name;
+          }
+        } catch (error) {
+          console.error(
+            `[resolveServiceNames] Error resolving product ${service.id}:`,
+            error,
+          );
+        }
+
+        return { ...service, name };
+      }),
+    );
   }
 
   async findAll(
@@ -285,6 +307,12 @@ export class AppointmentsService extends TransactionSupport {
         ];
       }
     }
+    if (services && services.length > 0) {
+      services = await this.resolveServiceNames(
+        services,
+        user.idBusiness ?? body.idBusiness,
+      );
+    }
 
     // Get customer name if not provided but idCustomer exists
     let customerName = body.customerName;
@@ -307,6 +335,8 @@ export class AppointmentsService extends TransactionSupport {
         (services && services.length > 0 ? services[0].id : ''),
       idCustomer: body.idCustomer,
       idEmployee: body.idEmployee,
+      idOrder: body.idOrder,
+      idOrderList: body.idOrderList,
       status: body.status ?? AppointmentStatus.pending,
       idBusiness: user.idBusiness??body.idBusiness,
       createdBy: user.id,
@@ -315,7 +345,10 @@ export class AppointmentsService extends TransactionSupport {
       googleCalendarEmployeeEventId: body.googleCalendarEventId,
       googleCalendarCustomerEventId: undefined,
       customerName: customerName,
-      serviceName: body.serviceName || body.services?.[0]?.name || '',
+      serviceName:
+        services && services.length > 0
+          ? this.formatServiceNamesSummaryFromServices(services)
+          : body.serviceName || '',
       employeeName: employeeName,
       notes: body.notes,
       services: services,
@@ -524,6 +557,19 @@ export class AppointmentsService extends TransactionSupport {
       if (appointment.idBusiness !== user.idBusiness) {
         throw new Error('MS007');
       }
+      const updateFields = Object.entries(updateAppointmentDto)
+        .filter(([, value]) => value !== undefined)
+        .map(([key]) => key);
+      const paymentOnlyFields = new Set([
+        'idOrder',
+        'idOrderList',
+        'modifiedBy',
+      ]);
+      const isPaymentOnlyUpdate =
+        updateFields.some(
+          (key) => key === 'idOrder' || key === 'idOrderList',
+        ) && updateFields.every((key) => paymentOnlyFields.has(key));
+
       // Only validate dates if both are provided in the update
       if (updateAppointmentDto.startDate && updateAppointmentDto.endDate) {
         this.validateAppointmentDates(
@@ -556,6 +602,10 @@ export class AppointmentsService extends TransactionSupport {
 
       // Calculate serviceName if services are provided
       if (cleanedDto.services && cleanedDto.services.length > 0) {
+        cleanedDto.services = await this.resolveServiceNames(
+          cleanedDto.services,
+          user.idBusiness,
+        );
         cleanedDto.serviceName = this.formatServiceNamesSummaryFromServices(
           cleanedDto.services,
         );
@@ -590,6 +640,12 @@ export class AppointmentsService extends TransactionSupport {
       await this.transaction(transactionItems);
 
       const appointmentData = await this.model.get({ id: appointment.id });
+      if (isPaymentOnlyUpdate) {
+        // Linking a payment must not sync calendars, reschedule reminders, or
+        // emit an appointment-modified notification.
+        return new GenericResponse(appointmentData);
+      }
+
       const sendGoogleCalendar = hasCustomerGoogleCalendarEvent(
         previousAppointment.googleCalendarEventId,
       );

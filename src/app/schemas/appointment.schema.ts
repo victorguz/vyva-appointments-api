@@ -22,6 +22,7 @@ export interface Appointment extends AppointmentKey {
   idCustomer?: string;
   idEmployee?: string;
   idOrder?: string;
+  idOrderList?: string[];
   status: AppointmentStatus;
   idBusiness?: string;
   createdBy?: string;
@@ -85,6 +86,11 @@ export const AppointmentSchema = new Schema(
         type: 'global',
         name: 'order-index',
       },
+    },
+    idOrderList: {
+      type: Array,
+      schema: [String],
+      required: false,
     },
     status: {
       type: String,

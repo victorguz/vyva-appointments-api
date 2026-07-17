@@ -5,6 +5,7 @@ import {
   IsDateString,
   IsNotEmpty,
   IsNumber,
+  IsOptional,
   IsString,
   Min,
   ValidateNested,
@@ -15,6 +16,22 @@ export class GetTimeslotsQueryDto {
   @IsString()
   @IsNotEmpty()
   serviceId: string;
+
+  @ApiProperty({
+    description: 'Comma-separated service IDs used to calculate slot duration',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  serviceIds?: string;
+
+  @ApiProperty({
+    description: 'Employee ID used to filter available slots',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
 
   @ApiProperty({
     description: 'Start date (ISO string, optional, default: now)',

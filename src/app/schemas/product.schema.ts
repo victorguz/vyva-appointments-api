@@ -11,6 +11,7 @@ export interface ProductKey {
 
 export interface Product extends ProductKey {
   name: string;
+  publicName?: string;
   image?: string | null;
   description?: string;
   measure: number;
@@ -50,6 +51,10 @@ export const ProductSchema = new Schema(
     name: {
       type: String,
       required: true,
+    },
+    publicName: {
+      type: String,
+      required: false,
     },
     image: {
       type: String,

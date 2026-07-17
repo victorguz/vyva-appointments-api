@@ -100,7 +100,14 @@ export class TimeslotsService {
    */
   async getAvailableTimeslots(
     businessId: string,
-    { serviceId, startDate, days, timezoneOffset }: GetTimeslotsQueryDto,
+    {
+      serviceId,
+      serviceIds,
+      employeeId,
+      startDate,
+      days,
+      timezoneOffset,
+    }: GetTimeslotsQueryDto,
   ): Promise<GenericResponse<{ [date: string]: AvailableTimeSlot[] }>> {
     try {
       const offset = Number(timezoneOffset) || 0;
@@ -110,14 +117,32 @@ export class TimeslotsService {
       );
       const startUtc = moment.utc(startDate);
 
-      const [service, activeEmployees, domainValues] = await Promise.all([
-        this.getService(serviceId, businessId),
+      const requestedServiceIds = [
+        ...new Set(
+          (serviceIds?.split(',') ?? [serviceId])
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      ];
+      const [services, allActiveEmployees, domainValues] = await Promise.all([
+        Promise.all(
+          requestedServiceIds.map((id) => this.getService(id, businessId)),
+        ),
         this.getActiveEmployees(businessId),
         this.loadDomainValuesByBusiness(businessId),
       ]);
+      const activeEmployees = employeeId
+        ? allActiveEmployees.filter((employee) => employee.id === employeeId)
+        : allActiveEmployees;
+      if (activeEmployees.length === 0) {
+        return new GenericResponse({});
+      }
+      const serviceMinutes = Math.max(
+        ...services.map((service) => Number(service.measure) || 60),
+      );
       const schedule = this.buildScheduleConfig(
         domainValues,
-        service.measure,
+        serviceMinutes,
       );
       const appointments = await this.getAppointments(
         businessId,

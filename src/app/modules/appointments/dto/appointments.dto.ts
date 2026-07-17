@@ -85,6 +85,15 @@ export class CreatePublicAppointmentDto {
   idOrder: string;
 
   @ApiProperty({
+    description: 'Order IDs linked to the appointment',
+    type: [String],
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  idOrderList?: string[];
+
+  @ApiProperty({
     description: 'Appointment status',
     enum: AppointmentStatus,
     default: AppointmentStatus.pending,
@@ -136,8 +145,7 @@ export class CreateAppointmentDto {
   idService?: string;
 
   @ApiProperty({
-    description:
-      'Cached display name: truncated names joined, e.g. "Name…, Name2… · N ítems"',
+    description: 'Cached full public names of the services',
   })
   @IsString()
   @IsOptional()
@@ -172,6 +180,15 @@ export class CreateAppointmentDto {
   @IsString()
   @IsOptional()
   idOrder: string;
+
+  @ApiProperty({
+    description: 'Order IDs linked to the appointment',
+    type: [String],
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  idOrderList?: string[];
 
   @ApiProperty({
     description: 'Appointment status',
@@ -264,8 +281,7 @@ export class UpdateAppointmentDto {
   notes?: string;
 
   @ApiProperty({
-    description:
-      'Cached display name: truncated names joined, e.g. "Name…, Name2… · N ítems"',
+    description: 'Cached full public names of the services',
   })
   @IsString()
   @IsOptional()
@@ -295,6 +311,15 @@ export class UpdateAppointmentDto {
   @IsString()
   @IsOptional()
   idOrder?: string;
+
+  @ApiProperty({
+    description: 'Order IDs linked to the appointment',
+    type: [String],
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  idOrderList?: string[];
 
   @ApiProperty({
     description: 'Appointment status',
@@ -423,6 +448,7 @@ export class CustomerAppointmentResponseDto {
   idCustomer?: string;
   idEmployee?: string;
   idOrder?: string;
+  idOrderList?: string[];
   status: AppointmentStatus;
   idBusiness?: string;
   createdBy?: string;
