@@ -315,7 +315,7 @@ export class AppointmentsService extends TransactionSupport {
     }
 
     // Get customer name if not provided but idCustomer exists
-    let customerName = body.customerName;
+    let customerName = body.customerName?.trim();
     if (!customerName && body.idCustomer) {
       customerName = await this.resolveCustomerName(body.idCustomer);
     }
@@ -387,7 +387,7 @@ export class AppointmentsService extends TransactionSupport {
       }
 
       // Get customer name if not provided but idCustomer exists
-      let customerName = body.customerName;
+      let customerName = body.customerName?.trim();
       if (!customerName && body.idCustomer) {
         customerName = await this.resolveCustomerName(body.idCustomer);
       }
@@ -582,6 +582,18 @@ export class AppointmentsService extends TransactionSupport {
       if ('notes' in updateAppointmentDto) {
         (cleanedUpdateDto as any).notes = updateAppointmentDto.notes ?? '';
       }
+      // Preserve payment list even when empty so unlinking the last payment works
+      if ('idOrderList' in updateAppointmentDto) {
+        (cleanedUpdateDto as any).idOrderList =
+          updateAppointmentDto.idOrderList ?? [];
+      }
+      const shouldClearIdOrder =
+        'idOrder' in updateAppointmentDto &&
+        (updateAppointmentDto.idOrder === '' ||
+          updateAppointmentDto.idOrder == null);
+      if (shouldClearIdOrder) {
+        delete (cleanedUpdateDto as any).idOrder;
+      }
       const cleanedDto = cleanedUpdateDto;
 
       // Handle date conversions - convert string dates to Date objects for Dynamoose
@@ -638,6 +650,13 @@ export class AppointmentsService extends TransactionSupport {
 
       // Update appointment fields if there are any changes
       await this.transaction(transactionItems);
+
+      if (shouldClearIdOrder) {
+        await this.model.update(
+          { id: appointment.id },
+          { $REMOVE: ['idOrder'] } as any,
+        );
+      }
 
       const appointmentData = await this.model.get({ id: appointment.id });
       if (isPaymentOnlyUpdate) {
@@ -794,9 +813,9 @@ export class AppointmentsService extends TransactionSupport {
       const customerData = customer.toJSON();
       return (
         [customerData.firstName, customerData.lastName]
+          .map((part) => part?.trim())
           .filter(Boolean)
-          .join(' ')
-          .trim() || 'Sin nombre'
+          .join(' ') || 'Sin nombre'
       );
     } catch (error) {
       console.error('[resolveCustomerName] Error:', error);

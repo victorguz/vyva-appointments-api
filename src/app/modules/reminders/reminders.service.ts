@@ -29,12 +29,6 @@ const WHATSAPP_NOTIFICATION_SETTINGS_GROUP = 'whatsappNotificationSettings';
 /** Send completed immediately only when already due (avoid waiting for the cron). */
 const COMPLETED_IMMEDIATE_GRACE_MS = 5_000;
 
-interface WhatsAppNotificationSettings extends AppointmentReminderNotificationSettings {
-  recipientPhones?: string[];
-  sendOnlyToRecipientPhones?: boolean;
-  useOwnWhatsAppAccount?: boolean;
-}
-
 @Injectable()
 export class RemindersService {
   private readonly logger = new Logger(RemindersService.name);
@@ -72,10 +66,7 @@ export class RemindersService {
         return;
       }
 
-      const recipients = await this.resolveRecipientsForAppointment(
-        appointment,
-        notificationSettings,
-      );
+      const recipients = await this.resolveCustomerRecipientPhones(appointment);
       if (!recipients.length) {
         this.logger.log(
           `Booking notification skipped for ${appointment.id}: no valid recipients`,
@@ -130,10 +121,7 @@ export class RemindersService {
         return;
       }
 
-      const recipients = await this.resolveRecipientsForAppointment(
-        appointment,
-        notificationSettings,
-      );
+      const recipients = await this.resolveCustomerRecipientPhones(appointment);
       if (!recipients.length) {
         await this.deleteAppointmentReminders(appointment.id);
         return;
@@ -183,7 +171,7 @@ export class RemindersService {
   private async ensureStatusReminders(
     appointment: Appointment,
     recipients: string[],
-    settings: WhatsAppNotificationSettings,
+    settings: AppointmentReminderNotificationSettings,
     statusKeys: AppointmentReminderStatusKey[],
   ): Promise<void> {
     for (const statusKey of statusKeys) {
@@ -395,19 +383,11 @@ export class RemindersService {
       return;
     }
 
-    const notificationSettings = await this.loadNotificationSettings(
-      appointmentBusinessId,
-    );
-
     if (
       !options?.skipEligibilityCheck &&
       !shouldSendScheduledAppointmentReminder(
         appointmentData,
         reminder.template,
-        {
-          allowWithoutCustomer:
-            notificationSettings?.sendOnlyToRecipientPhones === true,
-        },
       )
     ) {
       this.logger.log(
@@ -434,9 +414,6 @@ export class RemindersService {
       return;
     }
 
-    const sendOnlyToRegistered =
-      notificationSettings?.sendOnlyToRecipientPhones === true;
-
     const response = await this.lambdaInvokeService.invokeFunction(
       'vyva-whatsapp',
       'POST',
@@ -446,16 +423,14 @@ export class RemindersService {
         appointmentBusinessId,
         appointmentTemplateKey,
         appointmentContext: {
-          customerName: appointmentData.customerName,
+          customerName: appointmentData.customerName?.trim().split(/\s+/)[0],
           serviceName: appointmentData.serviceName,
           employeeName: appointmentData.employeeName,
           startDate: appointmentData.startDate,
           endDate: appointmentData.endDate,
         },
         clientMessageId: reminder.id,
-        idCustomer: sendOnlyToRegistered
-          ? undefined
-          : appointmentData.idCustomer,
+        idCustomer: appointmentData.idCustomer,
         displayName: appointmentData.customerName,
       },
       actor,
@@ -529,7 +504,7 @@ export class RemindersService {
 
   private async loadNotificationSettings(
     idBusiness: string,
-  ): Promise<WhatsAppNotificationSettings | null> {
+  ): Promise<AppointmentReminderNotificationSettings | null> {
     const domains = await this.domainModel
       .query('idBusiness')
       .eq(idBusiness)
@@ -544,15 +519,14 @@ export class RemindersService {
 
     const record = domains[0].toJSON() as Domain;
     try {
-      return JSON.parse(record.value ?? '{}') as WhatsAppNotificationSettings;
+      return JSON.parse(record.value ?? '{}') as AppointmentReminderNotificationSettings;
     } catch {
       return null;
     }
   }
 
-  private async resolveRecipientsForAppointment(
+  private async resolveCustomerRecipientPhones(
     appointment: Appointment,
-    settings: WhatsAppNotificationSettings | null,
   ): Promise<string[]> {
     let customerPhone: string | undefined;
 
@@ -561,20 +535,6 @@ export class RemindersService {
         id: appointment.idCustomer,
       });
       customerPhone = customer?.toJSON()?.phone;
-    }
-
-    return this.resolveReminderRecipients(settings, customerPhone);
-  }
-
-  private resolveReminderRecipients(
-    settings: WhatsAppNotificationSettings | null,
-    customerPhone?: string,
-  ): string[] {
-    if (settings?.sendOnlyToRecipientPhones === true) {
-      const phones = (settings.recipientPhones ?? [])
-        .map((entry) => this.normalizeWhatsAppPhone(entry))
-        .filter(Boolean);
-      return [...new Set(phones)];
     }
 
     const normalizedCustomer = this.normalizeWhatsAppPhone(customerPhone);
