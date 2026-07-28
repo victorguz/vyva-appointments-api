@@ -201,6 +201,7 @@ export class AppointmentsService extends TransactionSupport {
     user: User,
   ): Promise<GenericResponse<Appointment>> {
     const allPayloads: Appointment[] = [];
+    let creationCertified = false;
     try {
       const validAdditionalSessions = (body.additionalSessions ?? []).filter(
         (session) => !!session?.startDate && !!session?.endDate,
@@ -233,20 +234,31 @@ export class AppointmentsService extends TransactionSupport {
         allPayloads.map((p) => this.model.transaction.create(p)),
       );
 
+      // Certify every appointment was persisted before side effects (WhatsApp, etc.)
+      const certifiedAppointments =
+        await this.certifyAppointmentsCreated(allPayloads);
+      creationCertified = true;
+
       // Sync all to Google Calendar
       const syncResult = await this.syncAllToGoogleCalendar(
-        allPayloads,
+        certifiedAppointments,
         user,
         body.sendGoogleCalendar ?? false,
       );
 
+      // Re-read after sync so notifications use the persisted (post-sync) record
+      const persistedAppointments =
+        await this.certifyAppointmentsCreated(certifiedAppointments);
       const parentWithSync = await this.model.get({ id: parentPayload.id });
+      if (!parentWithSync) {
+        throw new Error('MS007');
+      }
       const parentData = parentWithSync.toJSON() as Appointment;
       this.notifyAppointmentChange('created', parentData);
+
+      // Booking message only after creation is certified
       await Promise.all(
-        allPayloads.map(async (payload) => {
-          const saved = await this.model.get({ id: payload.id });
-          const appointmentData = saved.toJSON() as Appointment;
+        persistedAppointments.map(async (appointmentData) => {
           await this.remindersService.sendBookingNotification(appointmentData);
           await this.remindersService.ensureAppointment(appointmentData);
         }),
@@ -259,13 +271,35 @@ export class AppointmentsService extends TransactionSupport {
             AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
           );
     } catch (error) {
-      for (const payload of allPayloads) {
-        try {
-          await this.model.delete(payload);
-        } catch (_) {}
+      // Never roll back after a certified create — WhatsApp may already have been sent
+      // (or the appointment is valid even if a later side effect failed).
+      if (!creationCertified) {
+        for (const payload of allPayloads) {
+          try {
+            await this.model.delete(payload);
+          } catch (_) {}
+        }
       }
       throw error;
     }
+  }
+
+  /**
+   * Strongly reads each appointment by id and fails if any write is missing.
+   * Used to certify creation before sending WhatsApp or other side effects.
+   */
+  private async certifyAppointmentsCreated(
+    payloads: Appointment[],
+  ): Promise<Appointment[]> {
+    const certified: Appointment[] = [];
+    for (const payload of payloads) {
+      const saved = await this.model.get({ id: payload.id });
+      if (!saved) {
+        throw new Error('MS007');
+      }
+      certified.push(saved.toJSON() as Appointment);
+    }
+    return certified;
   }
 
   private async createAppointmentObject(

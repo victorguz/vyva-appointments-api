@@ -49,42 +49,58 @@ export class RemindersService {
 
   async sendBookingNotification(appointment: Appointment): Promise<void> {
     try {
-      if (!appointment.idBusiness) {
+      if (!appointment?.id) {
+        this.logger.warn('Booking notification skipped: missing appointment id');
+        return;
+      }
+
+      // Only send after the appointment is confirmed in DynamoDB
+      const persisted = await this.appointmentModel.get({ id: appointment.id });
+      if (!persisted) {
+        this.logger.warn(
+          `Booking notification skipped for ${appointment.id}: appointment not found`,
+        );
+        return;
+      }
+      const appointmentData = persisted.toJSON() as Appointment;
+
+      if (!appointmentData.idBusiness) {
         this.logger.log(
-          `Booking notification skipped for ${appointment.id}: missing business`,
+          `Booking notification skipped for ${appointmentData.id}: missing business`,
         );
         return;
       }
 
       const notificationSettings = await this.loadNotificationSettings(
-        appointment.idBusiness,
+        appointmentData.idBusiness,
       );
       if (!notificationSettings?.appointmentReminders?.enabled) {
         this.logger.log(
-          `Booking notification skipped for ${appointment.id}: appointmentReminders disabled`,
+          `Booking notification skipped for ${appointmentData.id}: appointmentReminders disabled`,
         );
         return;
       }
 
-      const recipients = await this.resolveCustomerRecipientPhones(appointment);
+      const recipients =
+        await this.resolveCustomerRecipientPhones(appointmentData);
       if (!recipients.length) {
         this.logger.log(
-          `Booking notification skipped for ${appointment.id}: no valid recipients`,
+          `Booking notification skipped for ${appointmentData.id}: no valid recipients`,
         );
         return;
       }
 
       for (const recipient of recipients) {
         const reminder: Reminder = {
-          id: buildBookingReminderId(appointment.id, recipient),
+          id: buildBookingReminderId(appointmentData.id, recipient),
           type: REMINDER_TYPE_APPOINTMENT,
-          idReference: appointment.id,
+          idReference: appointmentData.id,
           template: APPOINTMENT_BOOKING_TEMPLATE,
           recipient,
           channel: 'whatsapp',
           sendDate: new Date(),
           expiresAt: 0,
-          idBusiness: appointment.idBusiness,
+          idBusiness: appointmentData.idBusiness,
         };
 
         await this.sendReminder(reminder, { skipEligibilityCheck: true });

@@ -71,7 +71,11 @@ export class AppointmentsPublicService extends TransactionSupport {
 
       await this.model.create(cleanedPayload);
 
+      // Certify creation before any side effects (WhatsApp, calendar, realtime)
       const appointmentResult = await this.model.get({ id: appointment.id });
+      if (!appointmentResult) {
+        throw new Error('MS007');
+      }
       const appointmentData = appointmentResult.toJSON() as Appointment;
 
       // Sync with Google Calendar (fire-and-forget, don't fail if sync fails)

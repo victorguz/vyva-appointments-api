@@ -1,0 +1,34 @@
+﻿{
+    "Item": {
+        "createdAt": {
+            "N": "1783789365620"
+        },
+        "description": {
+            "S": "Preferencias de notificaciones WhatsApp del negocio"
+        },
+        "group": {
+            "S": "whatsappNotificationSettings"
+        },
+        "id": {
+            "S": "3a603fbb-fd72-46c9-9984-f98fd410c9a8"
+        },
+        "idBusiness": {
+            "S": "955a5c42-3d08-4f2b-9bdd-8a81765aed0a"
+        },
+        "isActive": {
+            "BOOL": true
+        },
+        "name": {
+            "S": "whatsappNotificationSettings"
+        },
+        "order": {
+            "N": "0"
+        },
+        "updatedAt": {
+            "N": "1784777608825"
+        },
+        "value": {
+            "S": "{\"recipientPhones\":[\"573008883486\",\"573002017402\"],\"sendOnlyToRecipientPhones\":false,\"useOwnWhatsAppAccount\":true,\"unansweredMessages\":{\"enabled\":false},\"appointmentReminders\":{\"enabled\":true,\"statuses\":{\"pending\":{\"timing\":\"before\",\"mode\":\"dayAtTime\",\"dayAtTime\":\"09:00\"},\"confirmed\":{\"timing\":\"before\",\"mode\":\"hours\",\"hours\":2,\"dayAtTime\":\"09:00\"},\"completed\":{\"timing\":\"after\",\"mode\":\"dayAtTime\",\"dayAtTime\":\"13:00\"}}},\"sales\":{\"enabled\":false},\"onboardingCompleted\":true}"
+        }
+    }
+}
