@@ -3,7 +3,7 @@ import { Request } from 'express';
 import { InjectModel } from 'nestjs-dynamoose';
 import { Model } from 'nestjs-dynamoose';
 import { User, UserKey } from 'src/app/schemas/user.schema';
-import { UserRole } from 'src/app/core/constants/domain.constants';
+import { isPlatformCrossBusinessRole } from 'src/app/core/constants/domain.constants';
 import {
   EdgeUserContext,
   extractEdgeUserContext,
@@ -40,7 +40,7 @@ export class AuthGuard implements CanActivate {
     userData.password = undefined;
 
     if (
-      userData.role === UserRole.superadmin &&
+      isPlatformCrossBusinessRole(userData.role) &&
       edgeUser.idBusiness &&
       edgeUser.idBusiness.trim() !== ''
     ) {
