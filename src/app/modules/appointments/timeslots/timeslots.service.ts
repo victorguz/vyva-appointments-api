@@ -269,6 +269,7 @@ export class TimeslotsService {
       .and()
       .where('status')
       .in(AVAILABLE_APPOINTMENT_STATUSES_TO_GENERATE_TIMESLOTS)
+      .all()
       .exec();
 
     // Filtrar por startDate (rango) e idEmployee en memoria

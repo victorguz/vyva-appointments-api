@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -403,6 +404,17 @@ export class ListAppointmentDto {
   @IsDateString()
   @IsOptional()
   endDate?: string;
+
+  @ApiProperty({
+    description:
+      'Response shape. summary returns only agenda/list fields; full returns the complete document.',
+    enum: ['summary', 'full'],
+    required: false,
+    default: 'full',
+  })
+  @IsOptional()
+  @IsIn(['summary', 'full'])
+  view?: 'summary' | 'full';
 }
 
 export class UpdateAppointmentStatusDto {

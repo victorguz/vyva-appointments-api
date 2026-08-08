@@ -43,6 +43,7 @@ export class AppointmentsCustomerService extends TransactionSupport {
         .scan()
         .where('idUser')
         .eq(user.id)
+        .all()
         .exec();
       const customers: Customer[] = Array.isArray(customersResult)
         ? (customersResult as Customer[])
@@ -60,6 +61,7 @@ export class AppointmentsCustomerService extends TransactionSupport {
           .query('idCustomer')
           .using('customer-index')
           .eq(idCustomer)
+          .all()
           .exec();
         const list: Appointment[] = Array.isArray(queryResult)
           ? (queryResult as Appointment[])

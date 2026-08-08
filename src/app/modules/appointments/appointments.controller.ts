@@ -120,6 +120,21 @@ export class AppointmentsController {
     return this.appointmentsCustomerService.findAllByCustomer(user);
   }
 
+  @Get(':id')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({ summary: 'Get an appointment by ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Return the appointment.',
+    type: GenericResponse<Appointment>,
+  })
+  async findById(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    return this.appointmentsService.findById(id, user);
+  }
+
   @Put(':id')
   @UseGuards(AuthGuard, BusinessIdGuard)
   @ApiOperation({ summary: 'Update an appointment' })

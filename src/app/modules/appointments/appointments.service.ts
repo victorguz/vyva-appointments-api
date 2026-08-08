@@ -32,6 +32,24 @@ import {
   UpdateAppointmentStatusDto,
 } from './dto/appointments.dto';
 import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
+/** Fields returned when list is called with view=summary (agenda/list cards). */
+const APPOINTMENT_SUMMARY_ATTRIBUTES = [
+  'id',
+  'startDate',
+  'endDate',
+  'status',
+  'idEmployee',
+  'idCustomer',
+  'idService',
+  'idBusiness',
+  'customerName',
+  'employeeName',
+  'serviceName',
+  'sessionNumber',
+  'idParent',
+  'createdAt',
+] as const;
+
 @Injectable()
 export class AppointmentsService extends TransactionSupport {
   constructor(
@@ -110,11 +128,19 @@ export class AppointmentsService extends TransactionSupport {
         .using('idBusiness-index')
         .eq(user.idBusiness);
 
+      const useSummary = filters?.view === 'summary';
+
       // Serie de sesiones: devolver padre + hijos
       if (filters?.idParent) {
+        if (useSummary) {
+          businessQuery = businessQuery.attributes([
+            ...APPOINTMENT_SUMMARY_ATTRIBUTES,
+          ]);
+        }
         const children = await businessQuery
           .where('idParent')
           .eq(filters.idParent)
+          .all()
           .exec();
         const parent = await this.model.get({ id: filters.idParent });
 
@@ -164,7 +190,14 @@ export class AppointmentsService extends TransactionSupport {
           .le(new Date(filters.endDate).getTime());
       }
 
-      appointments = await businessQuery.exec();
+      if (useSummary) {
+        businessQuery = businessQuery.attributes([
+          ...APPOINTMENT_SUMMARY_ATTRIBUTES,
+        ]);
+      }
+
+      // Dynamoose returns only the first DynamoDB page unless .all() is used.
+      appointments = await businessQuery.all().exec();
 
       return new GenericResponse(
         appointments
@@ -174,6 +207,25 @@ export class AppointmentsService extends TransactionSupport {
     } catch (error) {
       throw error;
     }
+  }
+
+  async findById(
+    id: string,
+    user: User,
+  ): Promise<GenericResponse<Appointment>> {
+    if (!user?.idBusiness) {
+      throw new Error('MS014');
+    }
+    if (!id) {
+      throw new Error('MS014');
+    }
+
+    const appointment = await this.model.get({ id });
+    if (!appointment || appointment.idBusiness !== user.idBusiness) {
+      throw new Error('MS007');
+    }
+
+    return new GenericResponse(appointment);
   }
 
   async findAllByCustomer(user: User): Promise<GenericResponse<Appointment[]>> {
@@ -188,6 +240,7 @@ export class AppointmentsService extends TransactionSupport {
         .query('idCustomer')
         .using('customer-index')
         .eq(user.id)
+        .all()
         .exec();
 
       return new GenericResponse(customerQuery);
