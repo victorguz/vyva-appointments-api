@@ -7,7 +7,6 @@ custom:
   corsAllowedOrigins: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_ORIGINS}
   corsAllowedMethods: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_METHODS}
   corsAllowedHeaders: ${ssm:/vyva/${self:provider.stage}/CORS_ALLOWED_HEADERS}
-  remindersTable: ${self:provider.stage}-vyva-reminders
 
 provider:
   name: aws
@@ -73,8 +72,6 @@ provider:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains/*
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.remindersTable}
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.remindersTable}/*
 
         # Permisos para crear y modificar tablas DynamoDB
         - Effect: Allow
@@ -98,10 +95,8 @@ provider:
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-sales-orders/*
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains
             - arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.stage}-vyva-domains/*
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.remindersTable}
-            - arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.remindersTable}/*
 
-        # Permisos para invocar Lambda de integrations
+        # Permisos para invocar Lambda de integrations y del motor de automatizaciones
         - Effect: Allow
           Action:
             - lambda:InvokeFunction
@@ -109,6 +104,7 @@ provider:
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-integrations-${self:provider.stage}-api
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-domains-${self:provider.stage}-api
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-whatsapp-${self:provider.stage}-api
+            - arn:aws:lambda:${self:provider.region}:*:function:vyva-automations-${self:provider.stage}-invokeWebhook
 
         # Permisos para logs de CloudWatch
         - Effect: Allow
@@ -202,45 +198,6 @@ functions:
           authorizer:
             type: request
             id: ${self:custom.sharedAuthorizerId}
-
-resources:
-  Resources:
-    RemindersTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:custom.remindersTable}
-        BillingMode: PAY_PER_REQUEST
-        AttributeDefinitions:
-          - AttributeName: id
-            AttributeType: S
-          - AttributeName: type
-            AttributeType: S
-          - AttributeName: idReference
-            AttributeType: S
-          - AttributeName: status
-            AttributeType: S
-          - AttributeName: expiresAt
-            AttributeType: N
-        KeySchema:
-          - AttributeName: id
-            KeyType: HASH
-        GlobalSecondaryIndexes:
-          - IndexName: type-idReference-index
-            KeySchema:
-              - AttributeName: type
-                KeyType: HASH
-              - AttributeName: idReference
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
-          - IndexName: status-expiresAt-index
-            KeySchema:
-              - AttributeName: status
-                KeyType: HASH
-              - AttributeName: expiresAt
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
 
 package:
   excludeDevDependencies: true

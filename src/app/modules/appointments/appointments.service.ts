@@ -20,7 +20,7 @@ import {
   serializeGoogleCalendarEventIds,
 } from '../../shared/google-calendar-event-ids.storage';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
-import { RemindersService } from '../reminders/reminders.service';
+import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
 import {
   RealtimeAppointmentAction,
   RealtimePublisherService,
@@ -55,7 +55,7 @@ export class AppointmentsService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
     private readonly realtimePublisher: RealtimePublisherService,
-    private readonly remindersService: RemindersService,
+    private readonly webhookDispatch: WebhookDispatchService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
     @InjectModel('Customer')
@@ -309,12 +309,17 @@ export class AppointmentsService extends TransactionSupport {
       const parentData = parentWithSync.toJSON() as Appointment;
       this.notifyAppointmentChange('created', parentData);
 
-      // Booking message only after creation is certified
+      // Notify the automations engine only after creation is certified.
+      // Booking WhatsApp / next-day reminders are no longer hardcoded here —
+      // they are configured as automation rules (event: appointments.create).
       await Promise.all(
-        persistedAppointments.map(async (appointmentData) => {
-          await this.remindersService.sendBookingNotification(appointmentData);
-          await this.remindersService.ensureAppointment(appointmentData);
-        }),
+        persistedAppointments.map((appointmentData) =>
+          this.webhookDispatch.dispatch(
+            'appointments.create',
+            appointmentData as unknown as Record<string, unknown>,
+            appointmentData.idBusiness,
+          ),
+        ),
       );
       return syncResult.synced
         ? new GenericResponse(parentWithSync)
@@ -763,7 +768,11 @@ export class AppointmentsService extends TransactionSupport {
       const appointmentWithSync = await this.model.get({ id: appointment.id });
       const updatedData = appointmentWithSync.toJSON() as Appointment;
       this.notifyAppointmentChange('updated', updatedData);
-      await this.remindersService.ensureAppointment(updatedData);
+      await this.webhookDispatch.dispatch(
+        'appointments.update',
+        updatedData as unknown as Record<string, unknown>,
+        updatedData.idBusiness,
+      );
       return syncResult.synced
         ? new GenericResponse(appointmentWithSync)
         : new GenericResponse(
@@ -838,7 +847,11 @@ export class AppointmentsService extends TransactionSupport {
       );
 
       this.notifyAppointmentChange('updated', appointmentData);
-      await this.remindersService.ensureAppointment(appointmentData);
+      await this.webhookDispatch.dispatch(
+        'appointments.update',
+        appointmentData as unknown as Record<string, unknown>,
+        appointmentData.idBusiness,
+      );
       return new GenericResponse(appointmentData);
     } catch (error) {
       throw error;
@@ -853,7 +866,14 @@ export class AppointmentsService extends TransactionSupport {
       }
 
       const existing = await this.model.get({ id });
-      if (existing) await this.remindersService.ensureAppointment(existing.toJSON() as Appointment, { deleted: true });
+      if (existing) {
+        const existingData = existing.toJSON() as Appointment;
+        await this.webhookDispatch.dispatch(
+          'appointments.delete',
+          existingData as unknown as Record<string, unknown>,
+          existingData.idBusiness,
+        );
+      }
       await this.model.delete({ id });
       if (existing?.idBusiness) {
         this.notifyAppointmentChange('deleted', existing.toJSON() as Appointment);

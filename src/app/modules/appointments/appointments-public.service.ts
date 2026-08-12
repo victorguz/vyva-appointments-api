@@ -12,7 +12,7 @@ import {
 } from '../../shared/shared.functions';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { RealtimePublisherService } from '../shared/realtime-publisher.service';
-import { RemindersService } from '../reminders/reminders.service';
+import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
 import { CreateAppointmentDto } from './dto/appointments.dto';
 
 @Injectable()
@@ -20,7 +20,7 @@ export class AppointmentsPublicService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
     private readonly realtimePublisher: RealtimePublisherService,
-    private readonly remindersService: RemindersService,
+    private readonly webhookDispatch: WebhookDispatchService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
   ) {
@@ -104,8 +104,11 @@ export class AppointmentsPublicService extends TransactionSupport {
         endDate: new Date(appointmentData.endDate).toISOString(),
       });
 
-      await this.remindersService.sendBookingNotification(appointmentData);
-      await this.remindersService.ensureAppointment(appointmentData);
+      await this.webhookDispatch.dispatch(
+        'appointments.create',
+        appointmentData as unknown as Record<string, unknown>,
+        appointmentData.idBusiness,
+      );
 
       return new GenericResponse(appointmentData);
     } catch (error) {
