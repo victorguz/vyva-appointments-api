@@ -14,6 +14,15 @@ export interface AppointmentService {
   measure?: number;
 }
 
+export interface AppointmentPhoto {
+  id: string;
+  url: string;
+  fileName?: string;
+  mimeType?: string;
+  uploadedAt?: Date;
+  uploadedBy?: string;
+}
+
 export interface Appointment extends AppointmentKey {
   id: string;
   startDate: Date;
@@ -39,6 +48,9 @@ export interface Appointment extends AppointmentKey {
   serviceName?: string;
   employeeName?: string;
   notes?: string;
+  diagnosis?: string;
+  recommendations?: string;
+  photos?: AppointmentPhoto[]; // Photos, payment receipts or similar attachments
   services?: AppointmentService[]; // Array of services for this appointment
   idParent?: string; // ID of the parent appointment (for multi-session series)
   sessionNumber?: number; // 1-based session index within the series
@@ -151,6 +163,31 @@ export const AppointmentSchema = new Schema(
     },
     notes: {
       type: String,
+      required: false,
+    },
+    diagnosis: {
+      type: String,
+      required: false,
+    },
+    recommendations: {
+      type: String,
+      required: false,
+    },
+    photos: {
+      type: Array,
+      schema: [
+        {
+          type: Object,
+          schema: {
+            id: { type: String, required: true },
+            url: { type: String, required: true },
+            fileName: { type: String, required: false },
+            mimeType: { type: String, required: false },
+            uploadedAt: { type: Date, required: false },
+            uploadedBy: { type: String, required: false },
+          },
+        },
+      ],
       required: false,
     },
     services: {

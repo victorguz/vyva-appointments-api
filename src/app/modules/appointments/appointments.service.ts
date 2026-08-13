@@ -26,6 +26,7 @@ import {
   RealtimePublisherService,
 } from '../shared/realtime-publisher.service';
 import {
+  AppointmentPhotoDto,
   CreateAppointmentDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
@@ -453,83 +454,6 @@ export class AppointmentsService extends TransactionSupport {
     });
   }
 
-  async createTimeOutAppointment(
-    body: CreateAppointmentDto,
-    user: User,
-  ): Promise<GenericResponse<Appointment>> {
-    let appointmentPayload;
-    try {
-      if (!body.startDate || !body.endDate) {
-        throw new Error('MS014'); // Start and end dates are required
-      }
-
-      this.validateAppointmentDates(body.startDate, body.endDate);
-
-      const startDateTimestamp = new Date(body.startDate).getTime();
-      const endDateTimestamp = new Date(body.endDate).getTime();
-
-      // Validate that dates are valid and not Infinity
-      if (
-        !isFinite(startDateTimestamp) ||
-        !isFinite(endDateTimestamp) ||
-        isNaN(startDateTimestamp) ||
-        isNaN(endDateTimestamp)
-      ) {
-        throw new Error('MS042'); // Invalid date format
-      }
-
-      // Get customer name if not provided but idCustomer exists
-      let customerName = body.customerName?.trim();
-      if (!customerName && body.idCustomer) {
-        customerName = await this.resolveCustomerName(body.idCustomer);
-      }
-
-      const appointment: Appointment = {
-        id: uuidv4(),
-        startDate: sanitizeNumericValue(startDateTimestamp) as any,
-        endDate: sanitizeNumericValue(endDateTimestamp) as any,
-        idCustomer: body.idCustomer,
-        idEmployee: body.idEmployee,
-        status: AppointmentStatus.timeOut, // Status específico para appointments sin servicio
-        idBusiness: user.idBusiness,
-        createdBy: user.id,
-        googleCalendarId: body.googleCalendarId,
-        googleCalendarEventId: body.googleCalendarEventId,
-        googleCalendarEmployeeEventId: body.googleCalendarEventId,
-        googleCalendarCustomerEventId: undefined,
-        customerName: customerName,
-        serviceName: body.serviceName || '',
-        notes: body.notes,
-        services: [] as AppointmentService[], // Sin servicios
-      };
-
-      appointmentPayload = deleteEmptyProperties(appointment);
-
-      await this.model.create(appointmentPayload);
-
-      const appointmentData = await this.model.get({ id: appointment.id });
-      const syncResult = await this.syncAppointmentToGoogleCalendar(
-        appointmentData.toJSON() as Appointment,
-        user,
-        false, // createTimeOut never sends customer calendar events
-      );
-      const appointmentWithSync = await this.model.get({ id: appointment.id });
-      const timeoutData = appointmentWithSync.toJSON() as Appointment;
-      this.notifyAppointmentChange('created', timeoutData);
-      return syncResult.synced
-        ? new GenericResponse(appointmentWithSync)
-        : new GenericResponse(
-            appointmentWithSync,
-            true,
-            AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
-          );
-    } catch (error) {
-      if (appointmentPayload) await this.model.delete(appointmentPayload);
-
-      throw error;
-    }
-  }
-
   /**
    * Sync all appointments in a series to Google Calendar.
    * Failures are non-fatal — returns { synced: false } if any fails.
@@ -702,6 +626,15 @@ export class AppointmentsService extends TransactionSupport {
           throw new Error('MS042'); // Invalid date format
         }
         cleanedDto.endDate = endDate;
+      }
+      // Photos arrive with uploadedAt as an ISO string (DTO validates it as
+      // IsDateString); Dynamoose's Date-typed schema field requires an actual
+      // Date instance, so convert it the same way startDate/endDate are handled above.
+      if (cleanedDto.photos?.length) {
+        cleanedDto.photos = cleanedDto.photos.map((photo: AppointmentPhotoDto) => ({
+          ...photo,
+          uploadedAt: photo.uploadedAt ? new Date(photo.uploadedAt) : undefined,
+        })) as any;
       }
 
       // Calculate serviceName if services are provided
