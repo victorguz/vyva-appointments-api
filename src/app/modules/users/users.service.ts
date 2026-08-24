@@ -38,6 +38,7 @@ export class UsersService {
         .eq(UserRole.employee)
         .where('status')
         .eq(true)
+        .all()
         .exec();
       return new GenericResponse(users);
     } catch (error) {

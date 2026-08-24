@@ -319,6 +319,7 @@ export class TimeslotsService {
       .query('idBusiness')
       .eq(businessId)
       .using('domain-idBusiness-index')
+      .all()
       .exec();
 
     const values = new Map<string, string>();
