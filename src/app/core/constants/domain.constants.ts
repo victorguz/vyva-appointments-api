@@ -80,12 +80,3 @@ export enum AppointmentStatus {
   canceledByCustomer = 'canceledByCustomer',
   timeOut = 'timeOut',
 }
-
-export const APPOINTMENT_REMINDER_STATUS_KEYS = [
-  AppointmentStatus.pending,
-  AppointmentStatus.confirmed,
-  AppointmentStatus.completed,
-] as const;
-
-export type AppointmentReminderStatusKey =
-  (typeof APPOINTMENT_REMINDER_STATUS_KEYS)[number];

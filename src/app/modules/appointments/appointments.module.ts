@@ -6,7 +6,10 @@ import { AppointmentsService } from './appointments.service';
 import { ProductSchema } from 'src/app/schemas/product.schema';
 import { UserSchema } from 'src/app/schemas/user.schema';
 import { UsersService } from '../users/users.service';
-import { TimeslotsController } from './timeslots/timeslots.controller';
+import {
+  TimeslotsController,
+  PublicTimeslotsController,
+} from './timeslots/timeslots.controller';
 import { TimeslotsService } from './timeslots/timeslots.service';
 import { BusinessSchema } from 'src/app/schemas/business.schema';
 import { AppointmentsCustomerService } from './appointments-customer.service';
@@ -91,7 +94,11 @@ import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
       },
     ]),
   ],
-  controllers: [AppointmentsController, TimeslotsController],
+  controllers: [
+    AppointmentsController,
+    TimeslotsController,
+    PublicTimeslotsController,
+  ],
   providers: [
     AuthGuard,
     AppointmentsService,

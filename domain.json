@@ -1,13 +1,13 @@
-﻿{
+{
     "Item": {
         "createdAt": {
             "N": "1783789365620"
         },
         "description": {
-            "S": "Preferencias de notificaciones WhatsApp del negocio"
+            "S": "Entrega de las notificaciones de WhatsApp del negocio"
         },
         "group": {
-            "S": "whatsappNotificationSettings"
+            "S": "notificationDelivery"
         },
         "id": {
             "S": "3a603fbb-fd72-46c9-9984-f98fd410c9a8"
@@ -19,7 +19,7 @@
             "BOOL": true
         },
         "name": {
-            "S": "whatsappNotificationSettings"
+            "S": "notificationDelivery"
         },
         "order": {
             "N": "0"
@@ -28,7 +28,7 @@
             "N": "1784777608825"
         },
         "value": {
-            "S": "{\"recipientPhones\":[\"573008883486\",\"573002017402\"],\"sendOnlyToRecipientPhones\":false,\"useOwnWhatsAppAccount\":true,\"unansweredMessages\":{\"enabled\":false},\"appointmentReminders\":{\"enabled\":true,\"statuses\":{\"pending\":{\"timing\":\"before\",\"mode\":\"dayAtTime\",\"dayAtTime\":\"09:00\"},\"confirmed\":{\"timing\":\"before\",\"mode\":\"hours\",\"hours\":2,\"dayAtTime\":\"09:00\"},\"completed\":{\"timing\":\"after\",\"mode\":\"dayAtTime\",\"dayAtTime\":\"13:00\"}}},\"sales\":{\"enabled\":false},\"onboardingCompleted\":true}"
+            "S": "{\"recipientPhones\":[\"573008883486\",\"573002017402\"],\"sendOnlyToRecipientPhones\":false,\"useOwnWhatsAppAccount\":true}"
         }
     }
 }
