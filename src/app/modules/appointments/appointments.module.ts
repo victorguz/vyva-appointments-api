@@ -6,21 +6,24 @@ import { AppointmentsService } from './appointments.service';
 import { ProductSchema } from 'src/app/schemas/product.schema';
 import { UserSchema } from 'src/app/schemas/user.schema';
 import { UsersService } from '../users/users.service';
-import { TimeslotsController } from './timeslots/timeslots.controller';
+import {
+  TimeslotsController,
+  PublicTimeslotsController,
+} from './timeslots/timeslots.controller';
 import { TimeslotsService } from './timeslots/timeslots.service';
 import { BusinessSchema } from 'src/app/schemas/business.schema';
 import { AppointmentsCustomerService } from './appointments-customer.service';
 import { AppointmentsPublicService } from './appointments-public.service';
+import { TimeOutAppointmentsService } from './timeout-appointments.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { JWT_EXPIRATION } from 'src/app/core/config/environment.config';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { RealtimePublisherService } from '../shared/realtime-publisher.service';
+import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
 import { CustomerSchema } from 'src/app/schemas/customer.schema';
 import { DomainSchema } from 'src/app/schemas/domain.schema';
 import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
-import { ReminderSchema } from 'src/app/schemas/reminder.schema';
-import { RemindersService } from '../reminders/reminders.service';
 
 @Module({
   imports: [
@@ -42,15 +45,6 @@ import { RemindersService } from '../reminders/reminders.service';
         options: {
           tableName: 'appointments',
           throughput: 'ON_DEMAND',
-        },
-      },
-      {
-        name: 'Reminder',
-        schema: ReminderSchema,
-        options: {
-          tableName: 'reminders',
-          throughput: 'ON_DEMAND',
-          create: true,
         },
       },
       {
@@ -100,7 +94,11 @@ import { RemindersService } from '../reminders/reminders.service';
       },
     ]),
   ],
-  controllers: [AppointmentsController, TimeslotsController],
+  controllers: [
+    AppointmentsController,
+    TimeslotsController,
+    PublicTimeslotsController,
+  ],
   providers: [
     AuthGuard,
     AppointmentsService,
@@ -108,10 +106,11 @@ import { RemindersService } from '../reminders/reminders.service';
     TimeslotsService,
     AppointmentsCustomerService,
     AppointmentsPublicService,
+    TimeOutAppointmentsService,
     LambdaInvokeService,
     RealtimePublisherService,
-    RemindersService,
+    WebhookDispatchService,
   ],
-  exports: [AppointmentsService, RemindersService],
+  exports: [AppointmentsService],
 })
 export class AppointmentsModule {}

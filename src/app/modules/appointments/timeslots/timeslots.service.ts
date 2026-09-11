@@ -175,18 +175,27 @@ export class TimeslotsService {
     }
   }
 
-  /** Calendar date (YYYY-MM-DD) in the client's timezone for a UTC instant. */
+  /**
+   * Calendar date (YYYY-MM-DD) in the client's timezone for a UTC instant.
+   * timezoneOffset is local-minus-UTC in minutes (e.g. -300 for UTC-5), so
+   * converting UTC -> local wall-clock time means ADDING it.
+   */
   private toClientDateKey(
     utcInstant: Date | moment.Moment,
     timezoneOffset: number,
   ): string {
     return moment
       .utc(utcInstant)
-      .subtract(timezoneOffset, 'minutes')
+      .add(timezoneOffset, 'minutes')
       .format('YYYY-MM-DD');
   }
 
-  /** UTC instant for local midnight at the start of a client calendar day. */
+  /**
+   * UTC instant for local midnight at the start of a client calendar day.
+   * timezoneOffset is local-minus-UTC in minutes: ADD it to go UTC -> local
+   * wall-clock (floor to local midnight there), then SUBTRACT it to convert
+   * that local midnight back to a real UTC instant.
+   */
   private clientDayStartUtc(
     rangeStartUtc: moment.Moment,
     dayOffset: number,
@@ -194,10 +203,10 @@ export class TimeslotsService {
   ): moment.Moment {
     return rangeStartUtc
       .clone()
-      .subtract(timezoneOffset, 'minutes')
+      .add(timezoneOffset, 'minutes')
       .startOf('day')
       .add(dayOffset, 'days')
-      .add(timezoneOffset, 'minutes');
+      .subtract(timezoneOffset, 'minutes');
   }
 
   /**
@@ -310,6 +319,7 @@ export class TimeslotsService {
       .query('idBusiness')
       .eq(businessId)
       .using('domain-idBusiness-index')
+      .all()
       .exec();
 
     const values = new Map<string, string>();
@@ -481,7 +491,7 @@ export class TimeslotsService {
   ): string {
     const isoWeekday = moment
       .utc(clientMidnightUtc)
-      .subtract(timezoneOffset, 'minutes')
+      .add(timezoneOffset, 'minutes')
       .isoWeekday();
     return ISO_WEEKDAY_TO_KEY[isoWeekday] ?? 'monday';
   }

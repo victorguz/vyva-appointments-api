@@ -20,6 +20,7 @@ import { AuthGuard } from '../../core/auth/guards/auth.guard';
 import { AppointmentsService } from './appointments.service';
 import {
   CreateAppointmentDto,
+  CreateTimeOutAppointmentDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
@@ -27,6 +28,7 @@ import {
 import { BusinessIdGuard } from '../../core/auth/guards/businessId.guard';
 import { AppointmentsCustomerService } from './appointments-customer.service';
 import { AppointmentsPublicService } from './appointments-public.service';
+import { TimeOutAppointmentsService } from './timeout-appointments.service';
 
 @ApiTags('Appointments')
 @Controller('appointments')
@@ -35,6 +37,7 @@ export class AppointmentsController {
     private readonly appointmentsService: AppointmentsService,
     private readonly appointmentsCustomerService: AppointmentsCustomerService,
     private readonly appointmentsPublicService: AppointmentsPublicService,
+    private readonly timeOutAppointmentsService: TimeOutAppointmentsService,
   ) {}
 
   @Post('public')
@@ -64,11 +67,11 @@ export class AppointmentsController {
   })
   @ApiResponse({ status: 400, description: 'Bad request.' })
   async createTimeOutAppointment(
-    @Body() createAppointmentDto: CreateAppointmentDto,
+    @Body() createTimeOutAppointmentDto: CreateTimeOutAppointmentDto,
     @CurrentUser() user: User,
-  ): Promise<GenericResponse<Appointment>> {
-    return this.appointmentsService.createTimeOutAppointment(
-      createAppointmentDto,
+  ): Promise<GenericResponse<Appointment[]>> {
+    return this.timeOutAppointmentsService.createBatch(
+      createTimeOutAppointmentDto,
       user,
     );
   }

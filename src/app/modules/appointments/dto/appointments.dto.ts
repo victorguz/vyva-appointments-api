@@ -1,6 +1,7 @@
 import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -40,6 +41,38 @@ export class AppointmentServiceDto {
   @IsNumber()
   @IsOptional()
   measure?: number;
+}
+
+export class AppointmentPhotoDto {
+  @ApiProperty({ description: 'File ID (from vyva-files-api)' })
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @ApiProperty({ description: 'File URL' })
+  @IsString()
+  @IsNotEmpty()
+  url: string;
+
+  @ApiProperty({ description: 'Original file name' })
+  @IsString()
+  @IsOptional()
+  fileName?: string;
+
+  @ApiProperty({ description: 'File MIME type' })
+  @IsString()
+  @IsOptional()
+  mimeType?: string;
+
+  @ApiProperty({ description: 'Upload timestamp' })
+  @IsDateString()
+  @IsOptional()
+  uploadedAt?: string;
+
+  @ApiProperty({ description: 'User ID who uploaded the file' })
+  @IsString()
+  @IsOptional()
+  uploadedBy?: string;
 }
 
 export class AdditionalSessionDto {
@@ -162,6 +195,27 @@ export class CreateAppointmentDto {
   @IsOptional()
   notes?: string;
 
+  @ApiProperty({ description: 'Diagnosis for the appointment' })
+  @IsString()
+  @IsOptional()
+  diagnosis?: string;
+
+  @ApiProperty({ description: 'Recommendations for the appointment' })
+  @IsString()
+  @IsOptional()
+  recommendations?: string;
+
+  @ApiProperty({
+    description:
+      'Photos, payment receipts or similar attachments for the appointment',
+    type: [AppointmentPhotoDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AppointmentPhotoDto)
+  @IsOptional()
+  photos?: AppointmentPhotoDto[];
+
   @ApiProperty({
     description: 'Array of services',
     type: [AppointmentServiceDto],
@@ -250,6 +304,37 @@ export class CreateAppointmentDto {
   @Type(() => AdditionalSessionDto)
   additionalSessions?: AdditionalSessionDto[];
 }
+export class CreateTimeOutAppointmentDto {
+  @ApiProperty({ description: 'Time-off block start date and time' })
+  @IsDateString()
+  @IsNotEmpty()
+  startDate: string;
+
+  @ApiProperty({ description: 'Time-off block end date and time' })
+  @IsDateString()
+  @IsNotEmpty()
+  endDate: string;
+
+  @ApiProperty({
+    description: 'Employee IDs affected by this time-off block',
+    type: [String],
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  employeeIds: string[];
+
+  @ApiProperty({ description: 'Title of the time-off block' })
+  @IsString()
+  @IsNotEmpty()
+  customerName: string;
+
+  @ApiProperty({ description: 'Description of the time-off block' })
+  @IsString()
+  @IsOptional()
+  serviceName?: string;
+}
+
 export class UpdateAppointmentDto {
   @ApiProperty({ description: 'Appointment start date and time' })
   @IsDateString()
@@ -280,6 +365,27 @@ export class UpdateAppointmentDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ApiProperty({ description: 'Diagnosis for the appointment' })
+  @IsString()
+  @IsOptional()
+  diagnosis?: string;
+
+  @ApiProperty({ description: 'Recommendations for the appointment' })
+  @IsString()
+  @IsOptional()
+  recommendations?: string;
+
+  @ApiProperty({
+    description:
+      'Photos, payment receipts or similar attachments for the appointment',
+    type: [AppointmentPhotoDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AppointmentPhotoDto)
+  @IsOptional()
+  photos?: AppointmentPhotoDto[];
 
   @ApiProperty({
     description: 'Cached full public names of the services',

@@ -20,12 +20,13 @@ import {
   serializeGoogleCalendarEventIds,
 } from '../../shared/google-calendar-event-ids.storage';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
-import { RemindersService } from '../reminders/reminders.service';
+import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
 import {
   RealtimeAppointmentAction,
   RealtimePublisherService,
 } from '../shared/realtime-publisher.service';
 import {
+  AppointmentPhotoDto,
   CreateAppointmentDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
@@ -55,7 +56,7 @@ export class AppointmentsService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
     private readonly realtimePublisher: RealtimePublisherService,
-    private readonly remindersService: RemindersService,
+    private readonly webhookDispatch: WebhookDispatchService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
     @InjectModel('Customer')
@@ -309,12 +310,17 @@ export class AppointmentsService extends TransactionSupport {
       const parentData = parentWithSync.toJSON() as Appointment;
       this.notifyAppointmentChange('created', parentData);
 
-      // Booking message only after creation is certified
+      // Notify the automations engine only after creation is certified.
+      // Booking WhatsApp / next-day reminders are no longer hardcoded here —
+      // they are configured as automation rules (event: appointments.create).
       await Promise.all(
-        persistedAppointments.map(async (appointmentData) => {
-          await this.remindersService.sendBookingNotification(appointmentData);
-          await this.remindersService.ensureAppointment(appointmentData);
-        }),
+        persistedAppointments.map((appointmentData) =>
+          this.webhookDispatch.dispatch(
+            'appointments.create',
+            appointmentData as unknown as Record<string, unknown>,
+            appointmentData.idBusiness,
+          ),
+        ),
       );
       return syncResult.synced
         ? new GenericResponse(parentWithSync)
@@ -446,83 +452,6 @@ export class AppointmentsService extends TransactionSupport {
     return deleteEmptyProperties({
       ...appointment,
     });
-  }
-
-  async createTimeOutAppointment(
-    body: CreateAppointmentDto,
-    user: User,
-  ): Promise<GenericResponse<Appointment>> {
-    let appointmentPayload;
-    try {
-      if (!body.startDate || !body.endDate) {
-        throw new Error('MS014'); // Start and end dates are required
-      }
-
-      this.validateAppointmentDates(body.startDate, body.endDate);
-
-      const startDateTimestamp = new Date(body.startDate).getTime();
-      const endDateTimestamp = new Date(body.endDate).getTime();
-
-      // Validate that dates are valid and not Infinity
-      if (
-        !isFinite(startDateTimestamp) ||
-        !isFinite(endDateTimestamp) ||
-        isNaN(startDateTimestamp) ||
-        isNaN(endDateTimestamp)
-      ) {
-        throw new Error('MS042'); // Invalid date format
-      }
-
-      // Get customer name if not provided but idCustomer exists
-      let customerName = body.customerName?.trim();
-      if (!customerName && body.idCustomer) {
-        customerName = await this.resolveCustomerName(body.idCustomer);
-      }
-
-      const appointment: Appointment = {
-        id: uuidv4(),
-        startDate: sanitizeNumericValue(startDateTimestamp) as any,
-        endDate: sanitizeNumericValue(endDateTimestamp) as any,
-        idCustomer: body.idCustomer,
-        idEmployee: body.idEmployee,
-        status: AppointmentStatus.timeOut, // Status específico para appointments sin servicio
-        idBusiness: user.idBusiness,
-        createdBy: user.id,
-        googleCalendarId: body.googleCalendarId,
-        googleCalendarEventId: body.googleCalendarEventId,
-        googleCalendarEmployeeEventId: body.googleCalendarEventId,
-        googleCalendarCustomerEventId: undefined,
-        customerName: customerName,
-        serviceName: body.serviceName || '',
-        notes: body.notes,
-        services: [] as AppointmentService[], // Sin servicios
-      };
-
-      appointmentPayload = deleteEmptyProperties(appointment);
-
-      await this.model.create(appointmentPayload);
-
-      const appointmentData = await this.model.get({ id: appointment.id });
-      const syncResult = await this.syncAppointmentToGoogleCalendar(
-        appointmentData.toJSON() as Appointment,
-        user,
-        false, // createTimeOut never sends customer calendar events
-      );
-      const appointmentWithSync = await this.model.get({ id: appointment.id });
-      const timeoutData = appointmentWithSync.toJSON() as Appointment;
-      this.notifyAppointmentChange('created', timeoutData);
-      return syncResult.synced
-        ? new GenericResponse(appointmentWithSync)
-        : new GenericResponse(
-            appointmentWithSync,
-            true,
-            AppointmentsService.GOOGLE_SYNC_WARNING_MESSAGE,
-          );
-    } catch (error) {
-      if (appointmentPayload) await this.model.delete(appointmentPayload);
-
-      throw error;
-    }
   }
 
   /**
@@ -698,6 +627,15 @@ export class AppointmentsService extends TransactionSupport {
         }
         cleanedDto.endDate = endDate;
       }
+      // Photos arrive with uploadedAt as an ISO string (DTO validates it as
+      // IsDateString); Dynamoose's Date-typed schema field requires an actual
+      // Date instance, so convert it the same way startDate/endDate are handled above.
+      if (cleanedDto.photos?.length) {
+        cleanedDto.photos = cleanedDto.photos.map((photo: AppointmentPhotoDto) => ({
+          ...photo,
+          uploadedAt: photo.uploadedAt ? new Date(photo.uploadedAt) : undefined,
+        })) as any;
+      }
 
       // Calculate serviceName if services are provided
       if (cleanedDto.services && cleanedDto.services.length > 0) {
@@ -763,7 +701,11 @@ export class AppointmentsService extends TransactionSupport {
       const appointmentWithSync = await this.model.get({ id: appointment.id });
       const updatedData = appointmentWithSync.toJSON() as Appointment;
       this.notifyAppointmentChange('updated', updatedData);
-      await this.remindersService.ensureAppointment(updatedData);
+      await this.webhookDispatch.dispatch(
+        'appointments.update',
+        updatedData as unknown as Record<string, unknown>,
+        updatedData.idBusiness,
+      );
       return syncResult.synced
         ? new GenericResponse(appointmentWithSync)
         : new GenericResponse(
@@ -838,7 +780,11 @@ export class AppointmentsService extends TransactionSupport {
       );
 
       this.notifyAppointmentChange('updated', appointmentData);
-      await this.remindersService.ensureAppointment(appointmentData);
+      await this.webhookDispatch.dispatch(
+        'appointments.update',
+        appointmentData as unknown as Record<string, unknown>,
+        appointmentData.idBusiness,
+      );
       return new GenericResponse(appointmentData);
     } catch (error) {
       throw error;
@@ -853,7 +799,14 @@ export class AppointmentsService extends TransactionSupport {
       }
 
       const existing = await this.model.get({ id });
-      if (existing) await this.remindersService.ensureAppointment(existing.toJSON() as Appointment, { deleted: true });
+      if (existing) {
+        const existingData = existing.toJSON() as Appointment;
+        await this.webhookDispatch.dispatch(
+          'appointments.delete',
+          existingData as unknown as Record<string, unknown>,
+          existingData.idBusiness,
+        );
+      }
       await this.model.delete({ id });
       if (existing?.idBusiness) {
         this.notifyAppointmentChange('deleted', existing.toJSON() as Appointment);

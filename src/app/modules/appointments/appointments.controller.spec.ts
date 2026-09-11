@@ -2,6 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 
 import { AppointmentsController } from './appointments.controller';
 import { AppointmentsService } from './appointments.service';
+import { AppointmentsCustomerService } from './appointments-customer.service';
+import { AppointmentsPublicService } from './appointments-public.service';
+import { TimeOutAppointmentsService } from './timeout-appointments.service';
+import { AuthGuard } from '../../core/auth/guards/auth.guard';
+import { BusinessIdGuard } from '../../core/auth/guards/businessId.guard';
 
 describe('AppointmentsController', () => {
   let controller: AppointmentsController;
@@ -10,12 +15,17 @@ describe('AppointmentsController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AppointmentsController],
       providers: [
-        {
-          provide: AppointmentsService,
-          useValue: {},
-        },
+        { provide: AppointmentsService, useValue: {} },
+        { provide: AppointmentsCustomerService, useValue: {} },
+        { provide: AppointmentsPublicService, useValue: {} },
+        { provide: TimeOutAppointmentsService, useValue: {} },
       ],
-    }).compile();
+    })
+      .overrideGuard(AuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(BusinessIdGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<AppointmentsController>(AppointmentsController);
   });
