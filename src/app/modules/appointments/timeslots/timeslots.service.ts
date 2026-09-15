@@ -38,6 +38,27 @@ interface LunchBreakConfig {
   endTime: string;
 }
 
+/**
+ * Evento del dominio recurringTimeOuts (lo gestiona vyva-frontend).
+ * Horas y fechas son de reloj local del negocio, igual que lunchBreak.
+ */
+interface RecurringTimeOutEvent {
+  id: string;
+  employeeIds: string[];
+  /** HH:mm */
+  startTime: string;
+  /** HH:mm */
+  endTime: string;
+  /** monday ... sunday (mismas claves que activeTime) */
+  weekDays: string[];
+  /** YYYY-MM-DD */
+  startDate: string;
+  /** YYYY-MM-DD, null = sin fin */
+  endDate?: string | null;
+  /** YYYY-MM-DD */
+  excludedDates?: string[];
+}
+
 /** Parsed value from domain group appointmentTimes: {"splitTime":5,"defaultTime":90} */
 interface AppointmentTimesConfig {
   splitTime: number;
@@ -53,6 +74,7 @@ interface BusinessScheduleConfig {
   gridIntervalMinutes: number;
   activeTime: ActiveTimeConfig;
   lunchBreak: LunchBreakConfig | null;
+  recurringTimeOuts: RecurringTimeOutEvent[];
 }
 
 const ISO_WEEKDAY_TO_KEY: Record<number, string> = {
@@ -78,6 +100,9 @@ const DEFAULT_ACTIVE_DAYS = [
 const MAX_DAYS_RANGE = 31;
 const MAX_SLOTS_PER_DAY = 500;
 const LUNCH_APPOINTMENT_ID_PREFIX = '__lunch__';
+const RECURRING_TIME_OUT_APPOINTMENT_ID_PREFIX = '__recurring_timeout__';
+const TIME_OF_DAY_PATTERN = /^\d{1,2}:\d{2}$/;
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const ALLOWED_TIMESLOT_STATUSES = new Set<string>(
   AVAILABLE_APPOINTMENT_STATUSES_TO_GENERATE_TIMESLOTS,
@@ -159,13 +184,21 @@ export class TimeslotsService {
         schedule,
         activeEmployees,
       );
+      const appointmentsWithTimeOuts = this.mergeRecurringTimeOutsAsAppointments(
+        appointmentsWithLunch,
+        startUtc,
+        safeDays,
+        offset,
+        schedule,
+        activeEmployees,
+      );
 
       const availableSlotsByDate = this.buildAvailableSlotsByDate(
         startUtc,
         schedule,
         safeDays,
         offset,
-        appointmentsWithLunch,
+        appointmentsWithTimeOuts,
         activeEmployees,
       );
 
@@ -262,16 +295,18 @@ export class TimeslotsService {
     const startTimestamp = rangeStartUtc.valueOf();
     const endTimestamp = rangeStartUtc.clone().add(days, 'days').valueOf() - 1;
 
-    // OPTIMIZACIÓN: Usar query con GSI idBusiness-index en lugar de scan
+    // OPTIMIZACIÓN: Usar query con GSI idBusiness-index en lugar de scan.
+    // Filtro por solapamiento (no por contención) para no perder bloqueos que
+    // empiezan antes o terminan después del rango, p. ej. un tiempo fuera de varios días.
     const appointments = await this.appointmentModel
       .query('idBusiness')
       .using('idBusiness-index')
       .eq(businessId)
       .where('startDate')
-      .ge(startTimestamp)
+      .le(endTimestamp)
       .and()
       .where('endDate')
-      .le(endTimestamp)
+      .gt(startTimestamp)
       .and()
       .where('idEmployee')
       .in([...employeeIdSet])
@@ -421,7 +456,37 @@ export class TimeslotsService {
       gridIntervalMinutes,
       activeTime: this.parseActiveTimeConfig(domainValues.get('activeTime') ?? null),
       lunchBreak: this.parseLunchBreakConfig(domainValues.get('lunchBreak') ?? null),
+      recurringTimeOuts: this.parseRecurringTimeOuts(
+        domainValues.get('recurringTimeOuts') ?? null,
+      ),
     };
+  }
+
+  /**
+   * Parses recurringTimeOuts: {"events":[{id, employeeIds, startTime, endTime, weekDays, startDate, endDate, excludedDates}]}
+   * Descarta eventos mal formados en lugar de fallar toda la consulta.
+   */
+  private parseRecurringTimeOuts(raw: string | null): RecurringTimeOutEvent[] {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as { events?: RecurringTimeOutEvent[] };
+      if (!Array.isArray(parsed?.events)) return [];
+
+      return parsed.events.filter(
+        (event) =>
+          !!event?.id &&
+          Array.isArray(event.employeeIds) &&
+          Array.isArray(event.weekDays) &&
+          TIME_OF_DAY_PATTERN.test(event.startTime ?? '') &&
+          TIME_OF_DAY_PATTERN.test(event.endTime ?? '') &&
+          this.parseTimeToMinutes(event.endTime) >
+            this.parseTimeToMinutes(event.startTime) &&
+          DATE_KEY_PATTERN.test(event.startDate ?? '') &&
+          (!event.endDate || DATE_KEY_PATTERN.test(event.endDate)),
+      );
+    } catch {
+      return [];
+    }
   }
 
   private buildBlockedIntervalsByEmployee(
@@ -579,8 +644,103 @@ export class TimeslotsService {
     ];
   }
 
-  private isLunchSyntheticAppointment(appt: Appointment): boolean {
-    return appt.id?.startsWith(LUNCH_APPOINTMENT_ID_PREFIX) ?? false;
+  /**
+   * Injects one synthetic appointment per employee for each day a recurring
+   * time-out applies, so conflict detection treats it like a stored timeOut
+   * (same approach as lunchBreak).
+   */
+  private buildRecurringTimeOutAppointments(
+    startDateUtc: moment.Moment,
+    days: number,
+    timezoneOffset: number,
+    events: RecurringTimeOutEvent[],
+    activeEmployees: User[],
+  ): Appointment[] {
+    const activeEmployeeIds = new Set(activeEmployees.map((emp) => emp.id));
+    const timeOutAppointments: Appointment[] = [];
+
+    for (let dayOffset = 0; dayOffset < days; dayOffset++) {
+      const clientMidnightUtc = this.clientDayStartUtc(
+        startDateUtc,
+        dayOffset,
+        timezoneOffset,
+      );
+      const dateKey = this.toClientDateKey(clientMidnightUtc, timezoneOffset);
+      const weekdayKey = this.getClientWeekdayKey(
+        clientMidnightUtc,
+        timezoneOffset,
+      );
+
+      for (const event of events) {
+        if (
+          dateKey < event.startDate ||
+          (event.endDate && dateKey > event.endDate) ||
+          event.excludedDates?.includes(dateKey) ||
+          !event.weekDays.includes(weekdayKey)
+        ) {
+          continue;
+        }
+
+        const startDate = clientMidnightUtc
+          .clone()
+          .add(this.parseTimeToMinutes(event.startTime), 'minutes')
+          .toDate();
+        const endDate = clientMidnightUtc
+          .clone()
+          .add(this.parseTimeToMinutes(event.endTime), 'minutes')
+          .toDate();
+
+        for (const employeeId of event.employeeIds) {
+          if (!activeEmployeeIds.has(employeeId)) continue;
+          timeOutAppointments.push({
+            id: `${RECURRING_TIME_OUT_APPOINTMENT_ID_PREFIX}${event.id}_${employeeId}_${dateKey}`,
+            startDate,
+            endDate,
+            idEmployee: employeeId,
+            status: AppointmentStatus.timeOut,
+          } as Appointment);
+        }
+      }
+    }
+
+    return timeOutAppointments;
+  }
+
+  private mergeRecurringTimeOutsAsAppointments(
+    appointments: Appointment[],
+    startDateUtc: moment.Moment,
+    days: number,
+    timezoneOffset: number,
+    schedule: BusinessScheduleConfig,
+    activeEmployees: User[],
+  ): Appointment[] {
+    if (!schedule.recurringTimeOuts.length) {
+      return appointments;
+    }
+
+    return [
+      ...appointments,
+      ...this.buildRecurringTimeOutAppointments(
+        startDateUtc,
+        days,
+        timezoneOffset,
+        schedule.recurringTimeOuts,
+        activeEmployees,
+      ),
+    ];
+  }
+
+  /**
+   * Lunch and time-outs (stored or recurring) block the agenda but are not
+   * bookings, so they must not skew the per-employee load balancing.
+   */
+  private isNonBookingAppointment(appt: Appointment): boolean {
+    return (
+      appt.status === AppointmentStatus.timeOut ||
+      ((appt.id?.startsWith(LUNCH_APPOINTMENT_ID_PREFIX) ||
+        appt.id?.startsWith(RECURRING_TIME_OUT_APPOINTMENT_ID_PREFIX)) ??
+        false)
+    );
   }
 
   /**
@@ -723,7 +883,7 @@ export class TimeslotsService {
       countMap.set(emp.id, 0);
     }
     for (const appt of appointments) {
-      if (this.isLunchSyntheticAppointment(appt) || !appt.idEmployee) {
+      if (this.isNonBookingAppointment(appt) || !appt.idEmployee) {
         continue;
       }
       countMap.set(appt.idEmployee, (countMap.get(appt.idEmployee) ?? 0) + 1);

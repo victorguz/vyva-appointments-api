@@ -30,4 +30,6 @@ export const AVAILABLE_APPOINTMENT_STATUSES_TO_GENERATE_TIMESLOTS = [
   AppointmentStatus.web,
   AppointmentStatus.confirmed,
   AppointmentStatus.completed,
+  // Los tiempos fuera bloquean la agenda del empleado igual que una cita
+  AppointmentStatus.timeOut,
 ];
