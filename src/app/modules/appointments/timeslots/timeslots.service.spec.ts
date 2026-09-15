@@ -149,6 +149,21 @@ describe('TimeslotsService - tiempos fuera', () => {
     expect(slots['2026-09-15']).toEqual(['08:00', '09:00', '10:00', '11:00']);
   });
 
+  it('cada 2 semanas solo bloquea las semanas intercaladas', async () => {
+    // Semana de inicio: lunes 31 ago → 7 sep libre, 14 sep bloqueado
+    domainRows.push(
+      recurringDomain([
+        { ...baseEvent, startDate: '2026-09-02', weekDays: ['monday'], intervalWeeks: 2 },
+        { ...baseEvent, id: 'evt-2', startDate: '2026-09-08', weekDays: ['tuesday'], intervalWeeks: 2 },
+      ]),
+    );
+
+    const slots = await localTimesByDate();
+
+    expect(slots['2026-09-14']).toEqual(['08:00', '10:00', '11:00']);
+    expect(slots['2026-09-15']).toEqual(['08:00', '09:00', '10:00', '11:00']);
+  });
+
   it('no bloquea los días excluidos ni fuera de la vigencia', async () => {
     domainRows.push(
       recurringDomain([

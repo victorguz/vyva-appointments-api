@@ -51,6 +51,8 @@ interface RecurringTimeOutEvent {
   endTime: string;
   /** monday ... sunday (mismas claves que activeTime) */
   weekDays: string[];
+  /** Cada cuántas semanas (1 = todas, 2 = intercaladas), contadas desde la semana de startDate */
+  intervalWeeks?: number;
   /** YYYY-MM-DD */
   startDate: string;
   /** YYYY-MM-DD, null = sin fin */
@@ -676,7 +678,8 @@ export class TimeslotsService {
           dateKey < event.startDate ||
           (event.endDate && dateKey > event.endDate) ||
           event.excludedDates?.includes(dateKey) ||
-          !event.weekDays.includes(weekdayKey)
+          !event.weekDays.includes(weekdayKey) ||
+          !this.isRecurringWeekActive(event, dateKey)
         ) {
           continue;
         }
@@ -704,6 +707,29 @@ export class TimeslotsService {
     }
 
     return timeOutAppointments;
+  }
+
+  /**
+   * Semanas intercaladas: la semana ISO de dateKey debe estar a un múltiplo de
+   * intervalWeeks de la semana de startDate. Mismo cálculo que vyva-frontend
+   * (recurring-time-out.utils), en UTC sobre claves YYYY-MM-DD.
+   */
+  private isRecurringWeekActive(
+    event: RecurringTimeOutEvent,
+    dateKey: string,
+  ): boolean {
+    const interval = Math.max(1, Math.floor(Number(event.intervalWeeks) || 1));
+    if (interval === 1) return true;
+
+    const weeksSinceStart = moment
+      .utc(dateKey, 'YYYY-MM-DD')
+      .startOf('isoWeek')
+      .diff(
+        moment.utc(event.startDate, 'YYYY-MM-DD').startOf('isoWeek'),
+        'weeks',
+      );
+
+    return weeksSinceStart >= 0 && weeksSinceStart % interval === 0;
   }
 
   private mergeRecurringTimeOutsAsAppointments(
