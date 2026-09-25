@@ -74,6 +74,14 @@ export enum SalesOrderStatus {
 export enum AppointmentStatus {
   pending = 'pending',
   web = 'web',
+  /**
+   * La agendó el asistente por WhatsApp.
+   *
+   * Estado propio, como `web`, y no `pending` a secas: quien abre la agenda
+   * tiene que ver de un vistazo cuáles hay que comprobar, porque el pago lo
+   * recibió el bot y el comprobante todavía no lo ha mirado nadie.
+   */
+  bot = 'bot',
   confirmed = 'confirmed',
   canceled = 'canceled',
   completed = 'completed',

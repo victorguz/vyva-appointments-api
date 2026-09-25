@@ -28,6 +28,9 @@ export const DATE_FORMAT = {
 export const AVAILABLE_APPOINTMENT_STATUSES_TO_GENERATE_TIMESLOTS = [
   AppointmentStatus.pending,
   AppointmentStatus.web,
+  // Una cita del bot ocupa la hora igual que cualquier otra. Sin esto, la
+  // agenda volvería a ofrecerla y dos personas llegarían a la misma cita.
+  AppointmentStatus.bot,
   AppointmentStatus.confirmed,
   AppointmentStatus.completed,
   // Los tiempos fuera bloquean la agenda del empleado igual que una cita
