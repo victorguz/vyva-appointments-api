@@ -13,6 +13,7 @@ import {
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { RealtimePublisherService } from '../shared/realtime-publisher.service';
 import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
+import { AdConversionDispatchService } from '../shared/ad-conversion-dispatch.service';
 import { CreateAppointmentDto } from './dto/appointments.dto';
 
 @Injectable()
@@ -23,6 +24,7 @@ export class AppointmentsPublicService extends TransactionSupport {
     private readonly webhookDispatch: WebhookDispatchService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
+    private readonly adConversionDispatch: AdConversionDispatchService,
   ) {
     super();
   }
@@ -109,6 +111,9 @@ export class AppointmentsPublicService extends TransactionSupport {
         appointmentData as unknown as Record<string, unknown>,
         appointmentData.idBusiness,
       );
+
+      // Por si esta persona llegó desde un anuncio de WhatsApp.
+      await this.adConversionDispatch.appointmentBooked(appointmentData);
 
       return new GenericResponse(appointmentData);
     } catch (error) {

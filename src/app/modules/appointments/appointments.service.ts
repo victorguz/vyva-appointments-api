@@ -21,6 +21,7 @@ import {
 } from '../../shared/google-calendar-event-ids.storage';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
+import { AdConversionDispatchService } from '../shared/ad-conversion-dispatch.service';
 import {
   RealtimeAppointmentAction,
   RealtimePublisherService,
@@ -65,6 +66,7 @@ export class AppointmentsService extends TransactionSupport {
     private readonly userModel: Model<User, UserKey>,
     @InjectModel('Product')
     private readonly productModel: Model<Product, ProductKey>,
+    private readonly adConversionDispatch: AdConversionDispatchService,
   ) {
     super();
   }
@@ -322,6 +324,11 @@ export class AppointmentsService extends TransactionSupport {
           ),
         ),
       );
+
+      // Por si esta persona llegó desde un anuncio de WhatsApp. Solo la
+      // primera sesión: una serie es un solo agendamiento.
+      await this.adConversionDispatch.appointmentBooked(parentData);
+
       return syncResult.synced
         ? new GenericResponse(parentWithSync)
         : new GenericResponse(

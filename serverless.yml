@@ -105,6 +105,8 @@ provider:
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-domains-${self:provider.stage}-api
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-whatsapp-${self:provider.stage}-api
             - arn:aws:lambda:${self:provider.region}:*:function:vyva-automations-${self:provider.stage}-invokeWebhook
+            # Al agendar: por si la persona vino de un anuncio de WhatsApp.
+            - arn:aws:lambda:${self:provider.region}:*:function:vyva-whatsapp-${self:provider.stage}-adConversion
 
         # Permisos para logs de CloudWatch
         - Effect: Allow

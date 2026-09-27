@@ -21,6 +21,7 @@ import { JWT_EXPIRATION } from 'src/app/core/config/environment.config';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { RealtimePublisherService } from '../shared/realtime-publisher.service';
 import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
+import { AdConversionDispatchService } from '../shared/ad-conversion-dispatch.service';
 import { CustomerSchema } from 'src/app/schemas/customer.schema';
 import { DomainSchema } from 'src/app/schemas/domain.schema';
 import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
@@ -110,6 +111,7 @@ import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
     LambdaInvokeService,
     RealtimePublisherService,
     WebhookDispatchService,
+    AdConversionDispatchService,
   ],
   exports: [AppointmentsService],
 })

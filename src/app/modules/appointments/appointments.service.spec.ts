@@ -5,6 +5,7 @@ import { AppointmentsService } from './appointments.service';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
 import { RealtimePublisherService } from '../shared/realtime-publisher.service';
 import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
+import { AdConversionDispatchService } from '../shared/ad-conversion-dispatch.service';
 
 describe('AppointmentsService', () => {
   let service: AppointmentsService;
@@ -16,6 +17,7 @@ describe('AppointmentsService', () => {
         { provide: LambdaInvokeService, useValue: {} },
         { provide: RealtimePublisherService, useValue: {} },
         { provide: WebhookDispatchService, useValue: {} },
+        { provide: AdConversionDispatchService, useValue: {} },
         {
           provide: getModelToken('Appointment'),
           useValue: {},
