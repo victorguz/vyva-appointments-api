@@ -6,6 +6,7 @@ import { User } from 'src/app/schemas/user.schema';
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
+import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
 import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { Business, BusinessKey } from 'src/app/schemas/business.schema';
 import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
@@ -14,6 +15,7 @@ import { Customer, CustomerKey } from 'src/app/schemas/customer.schema';
 export class AppointmentsCustomerService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
+    private readonly webhookDispatch: WebhookDispatchService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
     @InjectModel('Product')
@@ -168,6 +170,21 @@ export class AppointmentsCustomerService extends TransactionSupport {
       }
 
       const appointmentData = updatedAppointment.toJSON() as Appointment;
+
+      /*
+       * El motor de automatizaciones tiene que enterarse, como en cualquier
+       * otro cambio de la cita.
+       *
+       * Sus recordatorios viven como temporizadores en EventBridge colgados de
+       * la fecha de la cita. Sin este aviso seguian en pie: el mensaje no le
+       * llegaba al cliente —el paso de envio relee la cita y no manda nada si
+       * esta cancelada— pero el temporizador quedaba ocupado hasta su fecha.
+       */
+      await this.webhookDispatch.dispatch(
+        'appointments.update',
+        appointmentData as unknown as Record<string, unknown>,
+        appointmentData.idBusiness,
+      );
 
       // Sync with Google Calendar (fire-and-forget, don't fail if sync fails)
       try {
