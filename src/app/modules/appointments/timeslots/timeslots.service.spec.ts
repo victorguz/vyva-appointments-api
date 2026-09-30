@@ -42,12 +42,13 @@ describe('TimeslotsService - tiempos fuera', () => {
     excludedDates: [] as string[],
   };
 
-  const localTimesByDate = async () => {
+  const localTimesByDate = async (extra: Record<string, unknown> = {}) => {
     const response = await service.getAvailableTimeslots(businessId, {
       serviceId: 'service-1',
       startDate,
       days: 2,
       timezoneOffset,
+      ...extra,
     } as any);
 
     return Object.fromEntries(
@@ -193,5 +194,68 @@ describe('TimeslotsService - tiempos fuera', () => {
     const slots = await localTimesByDate();
 
     expect(slots['2026-09-14']).toEqual(['08:00', '09:00', '10:00', '11:00']);
+  });
+
+  describe('paso entre horas ofrecidas', () => {
+    // Servicio de 60 minutos (ver el mock de Product) y 10 de margen entre citas.
+    beforeEach(() => {
+      domainRows.push({
+        group: 'appointmentTimes',
+        value: JSON.stringify({ splitTime: 10, defaultTime: 90 }),
+      });
+    });
+
+    it('por defecto conserva el paso fino de siempre: una hora cada 10 minutos', async () => {
+      const slots = await localTimesByDate();
+
+      expect(slots['2026-09-14'].slice(0, 3)).toEqual(['08:00', '08:10', '08:20']);
+      expect(slots['2026-09-14']).toHaveLength(19);
+    });
+
+    it('con grid=service ofrece una hora cada duración del servicio más el margen', async () => {
+      const slots = await localTimesByDate({ grid: 'service' });
+
+      // 08:00-09:00, margen, 09:10-10:10, margen, 10:20-11:20. Una cuarta no cabe antes de las 12:00.
+      expect(slots['2026-09-14']).toEqual(['08:00', '09:10', '10:20']);
+    });
+
+    it('ninguna hora ofrecida con grid=service se pisa con la siguiente', async () => {
+      const response = await service.getAvailableTimeslots(businessId, {
+        serviceId: 'service-1',
+        startDate,
+        days: 1,
+        timezoneOffset,
+        grid: 'service',
+      } as any);
+      const horas = response.data['2026-09-14'];
+
+      for (let i = 1; i < horas.length; i++) {
+        expect(horas[i].startTime.getTime()).toBeGreaterThanOrEqual(
+          horas[i - 1].endTime.getTime() + 10 * 60_000,
+        );
+      }
+    });
+
+    it('sin margen configurado, grid=service coincide con la duración', async () => {
+      domainRows.pop();
+
+      const slots = await localTimesByDate({ grid: 'service' });
+
+      expect(slots['2026-09-14']).toEqual(['08:00', '09:00', '10:00', '11:00']);
+    });
+
+    it('con una cita ya puesta, grid=service sigue ofreciendo las horas que caben', async () => {
+      appointmentRows.push({
+        id: 'apt-1',
+        idEmployee: 'emp-1',
+        status: 'confirmed',
+        startDate: localInstant(14, '08:00'),
+        endDate: localInstant(14, '09:00'),
+      });
+
+      const slots = await localTimesByDate({ grid: 'service' });
+
+      expect(slots['2026-09-14']).toEqual(['09:10', '10:20']);
+    });
   });
 });

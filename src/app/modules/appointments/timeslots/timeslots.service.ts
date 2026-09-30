@@ -72,7 +72,13 @@ interface BusinessScheduleConfig {
   serviceMinutes: number;
   /** Gap after an appointment ends before the next slot may start (appointmentTimes.splitTime). */
   marginMinutes: number;
-  /** Minutes between offered start times (= service duration, non-overlapping slots). */
+  /**
+   * Minutes between offered start times.
+   *
+   * Por defecto es el menor entre el margen y la duracion del servicio (paso
+   * fino: muchas horas, y las vecinas se pisan). Con `grid=service` es la
+   * duracion mas el margen: cada hora ofrecida cabe justo detras de la anterior.
+   */
   gridIntervalMinutes: number;
   activeTime: ActiveTimeConfig;
   lunchBreak: LunchBreakConfig | null;
@@ -134,6 +140,7 @@ export class TimeslotsService {
       startDate,
       days,
       timezoneOffset,
+      grid,
     }: GetTimeslotsQueryDto,
   ): Promise<GenericResponse<{ [date: string]: AvailableTimeSlot[] }>> {
     try {
@@ -170,6 +177,7 @@ export class TimeslotsService {
       const schedule = this.buildScheduleConfig(
         domainValues,
         serviceMinutes,
+        grid === 'service',
       );
       const appointments = await this.getAppointments(
         businessId,
@@ -440,6 +448,7 @@ export class TimeslotsService {
   private buildScheduleConfig(
     domainValues: Map<string, string>,
     serviceTime: number,
+    nonOverlapping = false,
   ): BusinessScheduleConfig {
     const appointmentTimes = this.parseAppointmentTimesConfig(
       domainValues.get('appointmentTimes'),
@@ -447,8 +456,12 @@ export class TimeslotsService {
     const serviceMinutes =
       serviceTime > 0 ? serviceTime : appointmentTimes.defaultTime;
     const marginMinutes = appointmentTimes.splitTime;
-    const gridIntervalMinutes =
-      marginMinutes > 0
+    // Sin `nonOverlapping` se conserva el paso de siempre: lo usan el enlace de
+    // reservas y otros clientes, y cambiarlo para todos de golpe cambiaria las
+    // horas que ven. Quien lo pide (el asistente) recibe horas que no se pisan.
+    const gridIntervalMinutes = nonOverlapping
+      ? serviceMinutes + marginMinutes
+      : marginMinutes > 0
         ? Math.min(marginMinutes, serviceMinutes)
         : serviceMinutes;
 

@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   IsArray,
   IsDateString,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -58,6 +59,18 @@ export class GetTimeslotsQueryDto {
   @Type(() => Number)
   @IsNumber()
   timezoneOffset: number;
+
+  @ApiProperty({
+    description:
+      'Como se reparten las horas que se ofrecen. Vacio: el paso fino de siempre, ' +
+      'que puede ofrecer horas que se pisan entre si. "service": una hora cada ' +
+      'duracion del servicio mas el margen, todas compatibles entre si.',
+    required: false,
+    enum: ['service'],
+  })
+  @IsOptional()
+  @IsIn(['service'])
+  grid?: 'service';
 
 }
 
