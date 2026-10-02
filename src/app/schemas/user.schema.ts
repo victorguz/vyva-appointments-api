@@ -11,7 +11,7 @@ export interface User extends UserKey {
   role: string;
   status: boolean;
   /** Recibe citas de la agenda pública y del asistente (false = lista de espera). */
-  showInPublicAgenda?: boolean;
+  showInPublicCalendars?: boolean;
   documentType?: string;
   documentNumber?: string;
   phone?: string;
@@ -72,7 +72,7 @@ export const UserSchema = new Schema(
       default: true,
       required: true,
     },
-    showInPublicAgenda: {
+    showInPublicCalendars: {
       type: Boolean,
       required: false,
       default: true,

@@ -278,12 +278,12 @@ export class TimeslotsService {
     if (!response.success || !response.data) {
       throw new Error('No hay empleados activos');
     }
-    // Solo los activos que reciben citas: una lista de espera (showInPublicAgenda
+    // Solo los activos que reciben citas: una lista de espera (showInPublicCalendars
     // en false) no es una persona y no ofrece horas. Sin el campo (empleados
     // anteriores) se asume que sí.
     return response.data.filter(
       (employee: User) =>
-        employee.status === true && employee.showInPublicAgenda !== false,
+        employee.status === true && employee.showInPublicCalendars !== false,
     );
   }
 

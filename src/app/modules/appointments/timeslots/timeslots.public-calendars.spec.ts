@@ -75,10 +75,10 @@ describe('TimeslotsService - agenda pública', () => {
     return ids;
   };
 
-  it('no ofrece horas de quien tiene showInPublicAgenda en false', async () => {
+  it('no ofrece horas de quien tiene showInPublicCalendars en false', async () => {
     const ids = await empleadosConHoras([
-      { id: 'lista', status: true, showInPublicAgenda: false },
-      { id: 'daniela', status: true, showInPublicAgenda: true },
+      { id: 'lista', status: true, showInPublicCalendars: false },
+      { id: 'daniela', status: true, showInPublicCalendars: true },
     ]);
 
     expect(ids).toEqual(new Set(['daniela']));
@@ -91,7 +91,7 @@ describe('TimeslotsService - agenda pública', () => {
   });
 
   it('si solo queda la lista de espera no hay horas', async () => {
-    const ids = await empleadosConHoras([{ id: 'lista', status: true, showInPublicAgenda: false }]);
+    const ids = await empleadosConHoras([{ id: 'lista', status: true, showInPublicCalendars: false }]);
 
     expect(ids.size).toBe(0);
   });
@@ -99,7 +99,7 @@ describe('TimeslotsService - agenda pública', () => {
   it('pedir a la lista de espera por su id tampoco da horas', async () => {
     const ids = await empleadosConHoras(
       [
-        { id: 'lista', status: true, showInPublicAgenda: false },
+        { id: 'lista', status: true, showInPublicCalendars: false },
         { id: 'daniela', status: true },
       ],
       { employeeId: 'lista' },
