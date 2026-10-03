@@ -267,6 +267,15 @@ export class CreateAppointmentDto {
   @IsOptional()
   channel?: AppointmentChannel;
 
+  @ApiProperty({
+    description:
+      'Id del usuario del equipo que verificó el pago de una cita que agendó el bot. Se guarda en `modifiedBy`.',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  confirmedBy?: string;
+
   @ApiProperty({ description: 'Business Info ID (for public appointments)' })
   @IsString()
   @IsOptional()

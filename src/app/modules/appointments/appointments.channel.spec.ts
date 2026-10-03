@@ -60,6 +60,19 @@ describe('Canal y creador de una cita', () => {
     expect(cita.createdBy).toBe('admin-1');
   });
 
+  it('con confirmedBy deja escrito qué persona verificó el pago, sin cambiar al creador', async () => {
+    const cita = await crear(cuerpo({ channel: AppointmentChannel.chatbot, confirmedBy: 'persona-7' }));
+
+    expect(cita.createdBy).toBe('chatbot');
+    expect(cita.modifiedBy).toBe('persona-7');
+  });
+
+  it('sin confirmedBy no inventa quién la modificó', async () => {
+    const cita = await crear(cuerpo({ channel: AppointmentChannel.chatbot }));
+
+    expect(cita.modifiedBy).toBeUndefined();
+  });
+
   it('un canal explícito de la app tampoco cambia al creador', async () => {
     const cita = await crear(cuerpo({ channel: AppointmentChannel.app }));
 

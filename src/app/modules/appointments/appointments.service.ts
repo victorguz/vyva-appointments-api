@@ -448,6 +448,8 @@ export class AppointmentsService extends TransactionSupport {
       createdBy:
         body.channel === AppointmentChannel.chatbot ? CHATBOT_ACTOR : user.id,
       channel: body.channel ?? AppointmentChannel.app,
+      // Quién verificó el pago cuando la cita la agenda el bot con el botón de confirmar.
+      ...(body.confirmedBy ? { modifiedBy: body.confirmedBy } : {}),
       googleCalendarId: body.googleCalendarId,
       googleCalendarEventId: body.googleCalendarEventId,
       googleCalendarEmployeeEventId: body.googleCalendarEventId,
