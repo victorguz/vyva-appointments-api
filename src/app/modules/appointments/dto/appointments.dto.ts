@@ -14,7 +14,10 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-import { AppointmentStatus } from '../../../core/constants/domain.constants';
+import {
+  AppointmentChannel,
+  AppointmentStatus,
+} from '../../../core/constants/domain.constants';
 
 export class AppointmentServiceDto {
   @ApiProperty({ description: 'Service ID' })
@@ -253,6 +256,16 @@ export class CreateAppointmentDto {
   @IsEnum(AppointmentStatus)
   @IsOptional()
   status?: AppointmentStatus;
+
+  @ApiProperty({
+    description:
+      'Por dónde entra la cita. Con `chatbot` el creador queda como «chatbot» y no como el usuario que llama.',
+    enum: AppointmentChannel,
+    required: false,
+  })
+  @IsEnum(AppointmentChannel)
+  @IsOptional()
+  channel?: AppointmentChannel;
 
   @ApiProperty({ description: 'Business Info ID (for public appointments)' })
   @IsString()

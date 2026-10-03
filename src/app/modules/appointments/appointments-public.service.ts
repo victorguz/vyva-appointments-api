@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
-import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
+import {
+  AppointmentChannel,
+  AppointmentStatus,
+} from 'src/app/core/constants/domain.constants';
 import { User } from 'src/app/schemas/user.schema';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -66,6 +69,7 @@ export class AppointmentsPublicService extends TransactionSupport {
         status: body.status ?? AppointmentStatus.web,
         idBusiness: body.idBusiness,
         createdBy: undefined as any,
+        channel: AppointmentChannel.web,
         notes: body.notes,
       };
 

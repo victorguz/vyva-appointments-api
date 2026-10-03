@@ -71,6 +71,27 @@ export enum SalesOrderStatus {
   canceled = 'canceled',
 }
 
+/**
+ * Por dónde entró la cita: qué cliente la creó. Igual que `SalesOrderChannel`
+ * en las ventas. `status` no sirve para esto: cambia cuando alguien confirma o
+ * completa la cita y con él se perdería de dónde vino.
+ */
+export enum AppointmentChannel {
+  /** El equipo, desde la app de Vyva o el chat. */
+  app = 'app',
+  /** El enlace público de reservas. */
+  web = 'web',
+  /** El bot que contesta el WhatsApp del negocio (`vyva-chatbot-api`). */
+  chatbot = 'chatbot',
+}
+
+/**
+ * Quién figura como creador cuando la cita la agenda el bot. El bot opera con
+ * el usuario de un administrador para poder llamar a la API, pero ese usuario
+ * no la creó: quedaba mezclada con lo que el administrador agenda a mano.
+ */
+export const CHATBOT_ACTOR = 'chatbot';
+
 export enum AppointmentStatus {
   pending = 'pending',
   web = 'web',

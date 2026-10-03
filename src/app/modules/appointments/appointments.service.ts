@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel, Model, TransactionSupport } from 'nestjs-dynamoose';
-import { AppointmentStatus } from 'src/app/core/constants/domain.constants';
+import {
+  AppointmentChannel,
+  AppointmentStatus,
+  CHATBOT_ACTOR,
+} from 'src/app/core/constants/domain.constants';
 import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { User, UserKey } from 'src/app/schemas/user.schema';
 import { v4 as uuidv4 } from 'uuid';
@@ -439,7 +443,11 @@ export class AppointmentsService extends TransactionSupport {
       idOrderList: body.idOrderList,
       status: body.status ?? AppointmentStatus.pending,
       idBusiness: user.idBusiness??body.idBusiness,
-      createdBy: user.id,
+      // Si la agendó el bot, el creador es «chatbot» y no el administrador con
+      // cuyo usuario llama a la API: así no se confunde con lo que agenda a mano.
+      createdBy:
+        body.channel === AppointmentChannel.chatbot ? CHATBOT_ACTOR : user.id,
+      channel: body.channel ?? AppointmentChannel.app,
       googleCalendarId: body.googleCalendarId,
       googleCalendarEventId: body.googleCalendarEventId,
       googleCalendarEmployeeEventId: body.googleCalendarEventId,

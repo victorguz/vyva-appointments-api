@@ -35,6 +35,8 @@ export interface Appointment extends AppointmentKey {
   status: AppointmentStatus;
   idBusiness?: string;
   createdBy?: string;
+  /** Por dónde entró (ver `AppointmentChannel`). Sin valor en las anteriores. */
+  channel?: string;
   modifiedBy?: string;
   createdAt?: Date;
   updatedAt?: Date;
@@ -122,6 +124,10 @@ export const AppointmentSchema = new Schema(
       },
     },
     createdBy: {
+      type: String,
+      required: false,
+    },
+    channel: {
       type: String,
       required: false,
     },
