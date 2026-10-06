@@ -59,15 +59,20 @@ describe('TimeslotsService - agenda pública', () => {
   const empleadosConHoras = async (
     employees: Array<Record<string, unknown>>,
     extra: Record<string, unknown> = {},
+    incluirOcultos = false,
   ) => {
     const service = await montar(employees);
-    const response = await service.getAvailableTimeslots(businessId, {
-      serviceId: 'service-1',
-      startDate,
-      days: 1,
-      timezoneOffset: -300,
-      ...extra,
-    } as any);
+    const response = await service.getAvailableTimeslots(
+      businessId,
+      {
+        serviceId: 'service-1',
+        startDate,
+        days: 1,
+        timezoneOffset: -300,
+        ...extra,
+      } as any,
+      incluirOcultos,
+    );
     const ids = new Set<string>();
     for (const slots of Object.values(response.data)) {
       for (const slot of slots) ids.add(slot.idEmployee);
@@ -106,6 +111,45 @@ describe('TimeslotsService - agenda pública', () => {
     );
 
     expect(ids.size).toBe(0);
+  });
+
+  describe('para el equipo, desde la app', () => {
+    it('ofrece también a quien no sale en los calendarios públicos', async () => {
+      const ids = await empleadosConHoras(
+        [
+          { id: 'lista', status: true, showInPublicCalendars: false },
+          { id: 'daniela', status: true },
+        ],
+        {},
+        true,
+      );
+
+      // Cada hora se asigna a un solo empleado: basta con que «Lista» entre en el reparto.
+      expect(ids.has('lista')).toBe(true);
+    });
+
+    it('se puede pedir a la lista de espera por su id', async () => {
+      const ids = await empleadosConHoras(
+        [{ id: 'lista', status: true, showInPublicCalendars: false }],
+        { employeeId: 'lista' },
+        true,
+      );
+
+      expect(ids).toEqual(new Set(['lista']));
+    });
+
+    it('los inactivos siguen sin ofrecer horas', async () => {
+      const ids = await empleadosConHoras(
+        [
+          { id: 'sofia', status: false },
+          { id: 'daniela', status: true },
+        ],
+        {},
+        true,
+      );
+
+      expect(ids).toEqual(new Set(['daniela']));
+    });
   });
 
   it('un empleado inactivo sigue sin ofrecer horas', async () => {
