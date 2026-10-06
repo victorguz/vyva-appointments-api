@@ -142,12 +142,6 @@ export class TimeslotsService {
       timezoneOffset,
       grid,
     }: GetTimeslotsQueryDto,
-    /**
-     * `true` solo desde la ruta autenticada del equipo: ahí se ofrecen también los
-     * empleados que no salen en los calendarios públicos (`showInPublicCalendars`
-     * en false). Las rutas públicas y el asistente no lo pasan.
-     */
-    includeHiddenEmployees = false,
   ): Promise<GenericResponse<{ [date: string]: AvailableTimeSlot[] }>> {
     try {
       const offset = Number(timezoneOffset) || 0;
@@ -168,7 +162,7 @@ export class TimeslotsService {
         Promise.all(
           requestedServiceIds.map((id) => this.getService(id, businessId)),
         ),
-        this.getActiveEmployees(businessId, includeHiddenEmployees),
+        this.getActiveEmployees(businessId),
         this.loadDomainValuesByBusiness(businessId),
       ]);
       const activeEmployees = employeeId
@@ -279,22 +273,17 @@ export class TimeslotsService {
   /**
    * Get active employees for a business
    */
-  private async getActiveEmployees(
-    businessId: string,
-    includeHiddenEmployees = false,
-  ): Promise<User[]> {
+  private async getActiveEmployees(businessId: string): Promise<User[]> {
     const response = await this.usersService.findEmployees(businessId);
     if (!response.success || !response.data) {
       throw new Error('No hay empleados activos');
     }
-    // Los calendarios públicos y el asistente solo ofrecen a quien tiene
-    // `showInPublicCalendars` (una lista de espera no es una persona). El equipo,
-    // desde la app, ve a todos los activos. Sin el campo (empleados anteriores)
-    // se asume que sí.
+    // Solo los activos que reciben citas: una lista de espera (showInPublicCalendars
+    // en false) no es una persona y no ofrece horas. Sin el campo (empleados
+    // anteriores) se asume que sí.
     return response.data.filter(
       (employee: User) =>
-        employee.status === true &&
-        (includeHiddenEmployees || employee.showInPublicCalendars !== false),
+        employee.status === true && employee.showInPublicCalendars !== false,
     );
   }
 
