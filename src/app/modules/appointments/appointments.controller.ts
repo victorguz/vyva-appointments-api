@@ -27,7 +27,6 @@ import {
 } from './dto/appointments.dto';
 import { BusinessIdGuard } from '../../core/auth/guards/businessId.guard';
 import { AppointmentsCustomerService } from './appointments-customer.service';
-import { AppointmentsPublicService } from './appointments-public.service';
 import { TimeOutAppointmentsService } from './timeout-appointments.service';
 
 @ApiTags('Appointments')
@@ -36,22 +35,14 @@ export class AppointmentsController {
   constructor(
     private readonly appointmentsService: AppointmentsService,
     private readonly appointmentsCustomerService: AppointmentsCustomerService,
-    private readonly appointmentsPublicService: AppointmentsPublicService,
     private readonly timeOutAppointmentsService: TimeOutAppointmentsService,
   ) {}
 
-  @Post('public')
-  @ApiOperation({ summary: 'Create a new appointment (public)' })
-  @ApiResponse({
-    status: 201,
-    description: 'The appointment has been successfully created.',
-    type: GenericResponse<Appointment>,
-  })
-  async createPublic(
-    @Body() createAppointmentDto: CreateAppointmentDto,
-  ): Promise<GenericResponse<Appointment>> {
-    return this.appointmentsPublicService.createPublic(createAppointmentDto);
-  }
+  // `POST /appointments/public` se retiró: creaba citas sin sesión en cualquier
+  // negocio (ids y estado a gusto de quien llamaba) y disparaba las
+  // automatizaciones de WhatsApp, sin ningún cliente que lo usara. La reserva
+  // desde la página pública va con sesión de cliente (`POST /appointments`);
+  // lo único sin sesión aquí son los horarios (`PublicTimeslotsController`).
 
   @Post('without-service')
   @UseGuards(AuthGuard, BusinessIdGuard)
