@@ -1,5 +1,6 @@
 import {
   EdgeUserContext,
+  isApiGatewayEvent,
   mapAuthorizerContext,
 } from './app/core/auth/utils/edge-user-context.util';
 
@@ -66,18 +67,37 @@ export function extractAuthorizerContextFromEvent(
   return undefined;
 }
 
+const VYVA_USER_HEADER = 'x-vyva-user';
+
+/** Borra `x-vyva-user` (cualquier mayúscula) de `headers` y `multiValueHeaders`. */
+export function removeVyvaUserHeader(event: Record<string, unknown>): void {
+  for (const key of ['headers', 'multiValueHeaders']) {
+    const bag = event[key] as Record<string, unknown> | null | undefined;
+    if (!bag || typeof bag !== 'object') continue;
+    for (const name of Object.keys(bag)) {
+      if (name.toLowerCase() === VYVA_USER_HEADER) delete bag[name];
+    }
+  }
+}
+
 export function injectAuthorizerContextIntoEvent(
   event: Record<string, unknown> | undefined,
 ): void {
-  const authorizerContext = extractAuthorizerContextFromEvent(event);
-  if (!authorizerContext?.sub || !event) return;
+  if (!event) return;
 
+  // Seguridad: lo que llega por API Gateway trae cabeceras del cliente. Las
+  // rutas públicas no tienen authorizer, así que un `x-vyva-user` puesto a
+  // mano suplantaría a cualquier usuario. Esa cabecera solo puede salir del
+  // authorizer; la invocación Lambda directa entre servicios sí la conserva.
+  if (isApiGatewayEvent(event)) removeVyvaUserHeader(event);
+
+  const authorizerContext = extractAuthorizerContextFromEvent(event);
+  if (!authorizerContext?.sub) return;
+
+  // Con authorizer, su contexto manda sobre cualquier cabecera previa.
+  removeVyvaUserHeader(event);
   const headers = (event.headers ?? {}) as Record<string, string | undefined>;
   event.headers = headers;
-
-  if (headers['x-vyva-user'] || headers['X-Vyva-User']) {
-    return;
-  }
 
   const payload = JSON.stringify(authorizerContext);
   headers['x-vyva-user'] = payload;
