@@ -53,7 +53,9 @@ export class GetTimeslotsQueryDto {
 
   @ApiProperty({
     description:
-      'Client timezone offset in minutes (optional, e.g., -300 for UTC-5)',
+      'Desfase del reloj del negocio en minutos, hora local MENOS UTC: -300 para ' +
+      'Colombia (UTC-5). Es el signo contrario a Date.getTimezoneOffset() del ' +
+      'navegador, que en Colombia da 300: hay que enviar -getTimezoneOffset().',
     required: false,
   })
   @Type(() => Number)
@@ -62,11 +64,12 @@ export class GetTimeslotsQueryDto {
 
   @ApiProperty({
     description:
-      'Como se reparten las horas que se ofrecen. Vacio: el paso fino de siempre, ' +
-      'que puede ofrecer horas que se pisan entre si. "service": una hora cada ' +
-      'duracion del servicio mas el margen, todas compatibles entre si.',
+      'Obsoleto, se acepta para no romper a quien lo envía. Las horas ya salen ' +
+      'siempre seguidas: una cada duración del servicio más el tiempo entre citas, ' +
+      'empezando en cada tramo libre del día.',
     required: false,
     enum: ['service'],
+    deprecated: true,
   })
   @IsOptional()
   @IsIn(['service'])

@@ -205,17 +205,16 @@ describe('TimeslotsService - tiempos fuera', () => {
       });
     });
 
-    it('por defecto conserva el paso fino de siempre: una hora cada 10 minutos', async () => {
+    it('ya no hay paso fino de 10 minutos: una hora cada duración del servicio más el margen', async () => {
       const slots = await localTimesByDate();
 
-      expect(slots['2026-09-14'].slice(0, 3)).toEqual(['08:00', '08:10', '08:20']);
-      expect(slots['2026-09-14']).toHaveLength(19);
+      // 08:00-09:00, margen, 09:10-10:10, margen, 10:20-11:20. Una cuarta no cabe antes de las 12:00.
+      expect(slots['2026-09-14']).toEqual(['08:00', '09:10', '10:20']);
     });
 
-    it('con grid=service ofrece una hora cada duración del servicio más el margen', async () => {
+    it('grid=service (obsoleto) da lo mismo que sin él', async () => {
       const slots = await localTimesByDate({ grid: 'service' });
 
-      // 08:00-09:00, margen, 09:10-10:10, margen, 10:20-11:20. Una cuarta no cabe antes de las 12:00.
       expect(slots['2026-09-14']).toEqual(['08:00', '09:10', '10:20']);
     });
 

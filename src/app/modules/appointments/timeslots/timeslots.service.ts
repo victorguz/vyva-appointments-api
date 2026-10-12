@@ -20,7 +20,17 @@ import { isEmpty } from 'class-validator';
 interface BlockedInterval {
   startMs: number;
   endMs: number;
-  bufferEndMs: number;
+  /**
+   * Cita de un cliente. Solo alrededor de estas se deja el tiempo entre citas:
+   * el almuerzo y los tiempos fuera no piden preparar el espacio.
+   */
+  isBooking: boolean;
+}
+
+/** Tramo libre de un empleado dentro de su horario del día. */
+interface FreeWindow {
+  startMs: number;
+  endMs: number;
 }
 
 interface DaySchedule {
@@ -70,16 +80,13 @@ interface AppointmentTimesConfig {
 interface BusinessScheduleConfig {
   /** Actual service duration shown on the booking and stored on the appointment. */
   serviceMinutes: number;
-  /** Gap after an appointment ends before the next slot may start (appointmentTimes.splitTime). */
-  marginMinutes: number;
   /**
-   * Minutes between offered start times.
-   *
-   * Por defecto es el menor entre el margen y la duracion del servicio (paso
-   * fino: muchas horas, y las vecinas se pisan). Con `grid=service` es la
-   * duracion mas el margen: cada hora ofrecida cabe justo detras de la anterior.
+   * Tiempo entre citas (appointmentTimes.splitTime): minutos libres que quedan
+   * entre dos citas de clientes del mismo empleado, antes y después de cada una.
+   * También separa las horas que se ofrecen: cada una empieza duración + este
+   * tiempo después de la anterior.
    */
-  gridIntervalMinutes: number;
+  marginMinutes: number;
   activeTime: ActiveTimeConfig;
   lunchBreak: LunchBreakConfig | null;
   recurringTimeOuts: RecurringTimeOutEvent[];
@@ -140,7 +147,6 @@ export class TimeslotsService {
       startDate,
       days,
       timezoneOffset,
-      grid,
     }: GetTimeslotsQueryDto,
   ): Promise<GenericResponse<{ [date: string]: AvailableTimeSlot[] }>> {
     try {
@@ -174,11 +180,7 @@ export class TimeslotsService {
       const serviceMinutes = Math.max(
         ...services.map((service) => Number(service.measure) || 60),
       );
-      const schedule = this.buildScheduleConfig(
-        domainValues,
-        serviceMinutes,
-        grid === 'service',
-      );
+      const schedule = this.buildScheduleConfig(domainValues, serviceMinutes);
       const appointments = await this.getAppointments(
         businessId,
         startUtc,
@@ -453,27 +455,16 @@ export class TimeslotsService {
   private buildScheduleConfig(
     domainValues: Map<string, string>,
     serviceTime: number,
-    nonOverlapping = false,
   ): BusinessScheduleConfig {
     const appointmentTimes = this.parseAppointmentTimesConfig(
       domainValues.get('appointmentTimes'),
     );
     const serviceMinutes =
       serviceTime > 0 ? serviceTime : appointmentTimes.defaultTime;
-    const marginMinutes = appointmentTimes.splitTime;
-    // Sin `nonOverlapping` se conserva el paso de siempre: lo usan el enlace de
-    // reservas y otros clientes, y cambiarlo para todos de golpe cambiaria las
-    // horas que ven. Quien lo pide (el asistente) recibe horas que no se pisan.
-    const gridIntervalMinutes = nonOverlapping
-      ? serviceMinutes + marginMinutes
-      : marginMinutes > 0
-        ? Math.min(marginMinutes, serviceMinutes)
-        : serviceMinutes;
 
     return {
       serviceMinutes,
-      marginMinutes,
-      gridIntervalMinutes,
+      marginMinutes: appointmentTimes.splitTime,
       activeTime: this.parseActiveTimeConfig(domainValues.get('activeTime') ?? null),
       lunchBreak: this.parseLunchBreakConfig(domainValues.get('lunchBreak') ?? null),
       recurringTimeOuts: this.parseRecurringTimeOuts(
@@ -511,9 +502,7 @@ export class TimeslotsService {
 
   private buildBlockedIntervalsByEmployee(
     appointments: Appointment[],
-    marginMinutes: number,
   ): Map<string, BlockedInterval[]> {
-    const marginMs = marginMinutes * 60_000;
     const byEmployee = new Map<string, BlockedInterval[]>();
 
     for (const appt of appointments) {
@@ -523,7 +512,7 @@ export class TimeslotsService {
       const interval: BlockedInterval = {
         startMs,
         endMs,
-        bufferEndMs: endMs + marginMs,
+        isBooking: !this.isNonBookingAppointment(appt),
       };
       const list = byEmployee.get(appt.idEmployee);
       if (list) {
@@ -549,25 +538,66 @@ export class TimeslotsService {
     return overlapping;
   }
 
-  private slotConflictsWithBlocks(
-    slotStartMs: number,
-    slotEndMs: number,
+  /**
+   * Tramos libres de un empleado entre la apertura y el cierre del día.
+   *
+   * Cada cita de cliente ocupa además el tiempo entre citas antes y después
+   * (para preparar el espacio); el almuerzo y los tiempos fuera ocupan solo su
+   * horario. Al cierre no hace falta dejar margen.
+   */
+  private buildFreeWindows(
+    dayStartMs: number,
+    dayEndMs: number,
     blocks: BlockedInterval[],
-    marginMinutes: number,
-  ): boolean {
-    for (const block of blocks) {
-      if (slotStartMs < block.endMs && slotEndMs > block.startMs) {
-        return true;
+    marginMs: number,
+  ): FreeWindow[] {
+    const busy = blocks
+      .map((block) =>
+        block.isBooking
+          ? { startMs: block.startMs - marginMs, endMs: block.endMs + marginMs }
+          : { startMs: block.startMs, endMs: block.endMs },
+      )
+      .sort((a, b) => a.startMs - b.startMs);
+
+    const windows: FreeWindow[] = [];
+    let cursor = dayStartMs;
+    for (const block of busy) {
+      if (block.startMs >= dayEndMs) break;
+      if (block.endMs <= cursor) continue;
+      if (block.startMs > cursor) {
+        windows.push({ startMs: cursor, endMs: block.startMs });
       }
-      if (
-        marginMinutes > 0 &&
-        slotStartMs > block.endMs &&
-        slotStartMs < block.bufferEndMs
+      cursor = block.endMs;
+      if (cursor >= dayEndMs) break;
+    }
+    if (cursor < dayEndMs) {
+      windows.push({ startMs: cursor, endMs: dayEndMs });
+    }
+    return windows;
+  }
+
+  /**
+   * Horas de inicio que se ofrecen dentro de cada tramo libre: la primera en
+   * cuanto se abre el tramo (la apertura, el fin del almuerzo o el fin de la
+   * cita anterior más el margen) y las siguientes cada duración + margen, para
+   * que las citas queden seguidas sin huecos que nadie pueda usar.
+   */
+  private packStartsInWindows(
+    windows: FreeWindow[],
+    serviceMs: number,
+    stepMs: number,
+  ): number[] {
+    const starts: number[] = [];
+    for (const window of windows) {
+      for (
+        let startMs = window.startMs;
+        startMs + serviceMs <= window.endMs && starts.length < MAX_SLOTS_PER_DAY;
+        startMs += stepMs
       ) {
-        return true;
+        starts.push(startMs);
       }
     }
-    return false;
+    return starts;
   }
 
   private getClientWeekdayKey(
@@ -788,7 +818,15 @@ export class TimeslotsService {
   }
 
   /**
-   * Builds available slots per date in one pass (no huge intermediate arrays).
+   * Horas libres por día.
+   *
+   * No hay una rejilla fija: cada empleado tiene sus tramos libres del día (su
+   * horario menos citas, almuerzo y tiempos fuera) y en cada tramo se ofrece la
+   * primera hora en cuanto se abre y luego una cada duración + tiempo entre
+   * citas. Un servicio de 90 minutos en un día libre da 12:00, 13:30, 15:00...
+   * y, tras una cita que acaba a las 13:30, la siguiente hora es 13:30 (más el
+   * margen, si lo hay). Cada hora se asigna al empleado menos ocupado entre
+   * aquellos a los que les cae justo en su paso, para no dejarles huecos.
    */
   private buildAvailableSlotsByDate(
     startDateUtc: moment.Moment,
@@ -799,10 +837,7 @@ export class TimeslotsService {
     activeEmployees: User[],
   ): { [date: string]: AvailableTimeSlot[] } {
     const result: { [date: string]: AvailableTimeSlot[] } = {};
-    const blockedByEmployee = this.buildBlockedIntervalsByEmployee(
-      appointments,
-      schedule.marginMinutes,
-    );
+    const blockedByEmployee = this.buildBlockedIntervalsByEmployee(appointments);
     const appointmentsByDate = new Map<string, Appointment[]>();
     for (const appt of appointments) {
       const dateKey = this.toClientDateKey(appt.startDate, timezoneOffset);
@@ -814,8 +849,9 @@ export class TimeslotsService {
       }
     }
 
-    const gridStep = schedule.gridIntervalMinutes;
     const serviceMs = schedule.serviceMinutes * 60_000;
+    const marginMs = schedule.marginMinutes * 60_000;
+    const stepMs = serviceMs + marginMs;
     const employeeIds = activeEmployees.map((e) => e.id);
 
     for (let dayOffset = 0; dayOffset < days; dayOffset++) {
@@ -847,65 +883,56 @@ export class TimeslotsService {
         dayAppointments,
         activeEmployees,
       );
-      const daySlots: AvailableTimeSlot[] = [];
-      let slotsGenerated = 0;
-
       const dayEndMs = dayEndTime.valueOf();
       const dayStartMs = dayStartTime.valueOf();
-      const gridStepMs = gridStep * 60_000;
-      const dayBlocksByEmployee = new Map<string, BlockedInterval[]>();
+
+      // Hora de inicio -> empleados a los que les cae en su paso, en el orden
+      // de la lista (a igual carga gana el primero, como antes).
+      const employeesByStart = new Map<number, string[]>();
       for (const empId of employeeIds) {
-        dayBlocksByEmployee.set(
-          empId,
+        const windows = this.buildFreeWindows(
+          dayStartMs,
+          dayEndMs,
           this.filterBlocksOverlappingDay(
             blockedByEmployee.get(empId) ?? [],
             dayStartMs,
             dayEndMs,
           ),
+          marginMs,
         );
+        for (const startMs of this.packStartsInWindows(
+          windows,
+          serviceMs,
+          stepMs,
+        )) {
+          const list = employeesByStart.get(startMs);
+          if (list) {
+            list.push(empId);
+          } else {
+            employeesByStart.set(startMs, [empId]);
+          }
+        }
       }
 
-      let slotStartMs = dayStartMs;
-
-      while (slotStartMs < dayEndMs && slotsGenerated < MAX_SLOTS_PER_DAY) {
-        const slotEndMs = slotStartMs + serviceMs;
-        if (slotEndMs > dayEndMs) {
-          break;
-        }
-
-        let pickedEmployee: string | null = null;
-        let pickedCount = Number.MAX_SAFE_INTEGER;
-
-        for (const empId of employeeIds) {
-          const blocks = dayBlocksByEmployee.get(empId) ?? [];
-          if (
-            this.slotConflictsWithBlocks(
-              slotStartMs,
-              slotEndMs,
-              blocks,
-              schedule.marginMinutes,
-            )
-          ) {
-            continue;
+      const daySlots: AvailableTimeSlot[] = [...employeesByStart.keys()]
+        .sort((a, b) => a - b)
+        .slice(0, MAX_SLOTS_PER_DAY)
+        .map((startMs) => {
+          let pickedEmployee = '';
+          let pickedCount = Number.MAX_SAFE_INTEGER;
+          for (const empId of employeesByStart.get(startMs) ?? []) {
+            const count = countMap.get(empId) ?? 0;
+            if (count < pickedCount) {
+              pickedCount = count;
+              pickedEmployee = empId;
+            }
           }
-          const count = countMap.get(empId) ?? 0;
-          if (count < pickedCount) {
-            pickedCount = count;
-            pickedEmployee = empId;
-          }
-        }
-
-        if (pickedEmployee) {
-          daySlots.push({
+          return {
             idEmployee: pickedEmployee,
-            startTime: new Date(slotStartMs),
-            endTime: new Date(slotEndMs),
-          });
-          slotsGenerated++;
-        }
-
-        slotStartMs += gridStepMs;
-      }
+            startTime: new Date(startMs),
+            endTime: new Date(startMs + serviceMs),
+          };
+        });
 
       if (daySlots.length > 0) {
         result[dateKey] = daySlots;
