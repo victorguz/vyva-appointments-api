@@ -44,6 +44,14 @@ export class AppointmentServiceDto {
   @IsNumber()
   @IsOptional()
   measure?: number;
+
+  @ApiProperty({
+    description: 'Cita de un paquete: cuántas sesiones tiene',
+    required: false,
+  })
+  @IsNumber()
+  @IsOptional()
+  packageSessions?: number;
 }
 
 export class AppointmentPhotoDto {
@@ -88,6 +96,19 @@ export class AdditionalSessionDto {
   @IsDateString()
   @IsNotEmpty()
   endDate: string;
+
+  @ApiProperty({
+    description:
+      'Servicios de esta sesión. Si no vienen, la sesión usa los de la cita principal. ' +
+      'Un paquete los manda con el valor que le toca a cada sesión.',
+    type: [AppointmentServiceDto],
+    required: false,
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AppointmentServiceDto)
+  @IsOptional()
+  services?: AppointmentServiceDto[];
 }
 
 export class CreatePublicAppointmentDto {

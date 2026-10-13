@@ -12,6 +12,8 @@ export interface AppointmentService {
   price?: number;
   offerPrice?: number;
   measure?: number;
+  /** Cita de un paquete: cuántas sesiones tiene. El valor de la línea es el de esta sesión. */
+  packageSessions?: number;
 }
 
 export interface AppointmentPhoto {
@@ -207,6 +209,7 @@ export const AppointmentSchema = new Schema(
             price: { type: Number, required: false },
             offerPrice: { type: Number, required: false },
             measure: { type: Number, required: false },
+            packageSessions: { type: Number, required: false },
           },
         },
       ],

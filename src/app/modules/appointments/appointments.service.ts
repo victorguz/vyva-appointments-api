@@ -280,7 +280,13 @@ export class AppointmentsService extends TransactionSupport {
         for (let i = 0; i < validAdditionalSessions.length; i++) {
           const session = validAdditionalSessions[i];
           const childPayload = await this.createAppointmentObject(
-            { ...body, startDate: session.startDate, endDate: session.endDate },
+            {
+              ...body,
+              startDate: session.startDate,
+              endDate: session.endDate,
+              // Un paquete manda el valor de cada sesión; si no, hereda los servicios.
+              ...(session.services?.length ? { services: session.services } : {}),
+            },
             user,
           );
           childPayload.idParent = parentPayload.id;
