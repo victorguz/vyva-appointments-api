@@ -1,6 +1,7 @@
 import { ApiProperty, OmitType, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayNotEmpty,
   IsArray,
   IsBoolean,
@@ -376,6 +377,50 @@ export class CreateTimeOutAppointmentDto {
   @IsString()
   @IsOptional()
   serviceName?: string;
+}
+
+export class ExternalEventItemDto {
+  @ApiProperty({ description: 'Employee the event is applied to' })
+  @IsString()
+  @IsNotEmpty()
+  idEmployee: string;
+
+  @ApiProperty({ description: 'Calendar the event comes from' })
+  @IsString()
+  @IsNotEmpty()
+  sourceCalendarId: string;
+
+  @ApiProperty({ description: 'Event id in the source calendar' })
+  @IsString()
+  @IsNotEmpty()
+  sourceEventId: string;
+
+  @ApiProperty({ description: 'Event title' })
+  @IsString()
+  @IsNotEmpty()
+  title: string;
+
+  @ApiProperty({ description: 'Event details', required: false })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiProperty({ description: 'Event start' })
+  @IsDateString()
+  startDate: string;
+
+  @ApiProperty({ description: 'Event end' })
+  @IsDateString()
+  endDate: string;
+}
+
+export class ImportExternalAppointmentsDto {
+  @ApiProperty({ type: [ExternalEventItemDto] })
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @ValidateNested({ each: true })
+  @Type(() => ExternalEventItemDto)
+  items: ExternalEventItemDto[];
 }
 
 export class UpdateAppointmentDto {

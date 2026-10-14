@@ -47,6 +47,10 @@ export interface Appointment extends AppointmentKey {
   googleCalendarEventId?: string;
   googleCalendarEmployeeEventId?: string;
   googleCalendarCustomerEventId?: string;
+  /** De dónde se importó este bloqueo (hoy `google`). Sin valor en las citas normales. */
+  externalSource?: string;
+  /** Identidad del evento externo de origen, para no importarlo dos veces. */
+  externalId?: string;
   // New fields for multiple services and cached names
   customerName?: string;
   serviceName?: string;
@@ -154,6 +158,14 @@ export const AppointmentSchema = new Schema(
       required: false,
     },
     googleCalendarCustomerEventId: {
+      type: String,
+      required: false,
+    },
+    externalSource: {
+      type: String,
+      required: false,
+    },
+    externalId: {
       type: String,
       required: false,
     },

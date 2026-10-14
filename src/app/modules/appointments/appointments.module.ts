@@ -14,6 +14,7 @@ import { TimeslotsService } from './timeslots/timeslots.service';
 import { BusinessSchema } from 'src/app/schemas/business.schema';
 import { AppointmentsCustomerService } from './appointments-customer.service';
 import { TimeOutAppointmentsService } from './timeout-appointments.service';
+import { ExternalImportService } from './external-import.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { JWT_EXPIRATION } from 'src/app/core/config/environment.config';
@@ -106,6 +107,7 @@ import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
     TimeslotsService,
     AppointmentsCustomerService,
     TimeOutAppointmentsService,
+    ExternalImportService,
     LambdaInvokeService,
     RealtimePublisherService,
     WebhookDispatchService,

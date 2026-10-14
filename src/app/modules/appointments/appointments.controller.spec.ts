@@ -6,6 +6,7 @@ import { AppointmentsController } from './appointments.controller';
 import { AppointmentsService } from './appointments.service';
 import { AppointmentsCustomerService } from './appointments-customer.service';
 import { TimeOutAppointmentsService } from './timeout-appointments.service';
+import { ExternalImportService } from './external-import.service';
 import { AuthGuard } from '../../core/auth/guards/auth.guard';
 import { BusinessIdGuard } from '../../core/auth/guards/businessId.guard';
 
@@ -19,6 +20,7 @@ describe('AppointmentsController', () => {
         { provide: AppointmentsService, useValue: {} },
         { provide: AppointmentsCustomerService, useValue: {} },
         { provide: TimeOutAppointmentsService, useValue: {} },
+        { provide: ExternalImportService, useValue: {} },
       ],
     })
       .overrideGuard(AuthGuard)

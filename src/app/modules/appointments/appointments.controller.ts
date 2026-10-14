@@ -21,6 +21,7 @@ import { AppointmentsService } from './appointments.service';
 import {
   CreateAppointmentDto,
   CreateTimeOutAppointmentDto,
+  ImportExternalAppointmentsDto,
   ListAppointmentDto,
   UpdateAppointmentDto,
   UpdateAppointmentStatusDto,
@@ -28,6 +29,7 @@ import {
 import { BusinessIdGuard } from '../../core/auth/guards/businessId.guard';
 import { AppointmentsCustomerService } from './appointments-customer.service';
 import { TimeOutAppointmentsService } from './timeout-appointments.service';
+import { ExternalImportService, ExternalImportResult } from './external-import.service';
 
 @ApiTags('Appointments')
 @Controller('appointments')
@@ -36,6 +38,7 @@ export class AppointmentsController {
     private readonly appointmentsService: AppointmentsService,
     private readonly appointmentsCustomerService: AppointmentsCustomerService,
     private readonly timeOutAppointmentsService: TimeOutAppointmentsService,
+    private readonly externalImportService: ExternalImportService,
   ) {}
 
   // `POST /appointments/public` se retiró: creaba citas sin sesión en cualquier
@@ -65,6 +68,20 @@ export class AppointmentsController {
       createTimeOutAppointmentDto,
       user,
     );
+  }
+
+  @Post('import-external')
+  @UseGuards(AuthGuard, BusinessIdGuard)
+  @ApiOperation({
+    summary:
+      'Import future events of an external calendar as agenda blocks (additive, idempotent)',
+  })
+  @ApiResponse({ status: 201, description: 'Import summary.' })
+  async importExternal(
+    @Body() dto: ImportExternalAppointmentsDto,
+    @CurrentUser() user: User,
+  ): Promise<GenericResponse<ExternalImportResult>> {
+    return this.externalImportService.importBatch(dto, user);
   }
 
   @Post()
