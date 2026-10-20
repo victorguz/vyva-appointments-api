@@ -20,11 +20,23 @@
     "logs:prd": "serverless logs -t -f api --stage prd",
     "deploy:functions:qas": "serverless deploy function -f preflight --stage qas && serverless deploy function -f api --stage qas",
     "deploy:functions:prd": "serverless deploy function -f preflight --stage prd && serverless deploy function -f api --stage prd",
+    "predeploy:qas": "node scripts/release-version.mjs qas",
+
     "deploy:qas": "nest build && npm run deploy:functions:qas",
+    "predeploy:prd": "node scripts/release-version.mjs prd",
+
     "deploy:prd": "nest build && npm run deploy:functions:prd",
+    "predeploy:all": "node scripts/release-version.mjs all",
+
     "deploy:all": "nest build && npm run deploy:functions:qas && npm run deploy:functions:prd",
+    "predeploy:qas:force": "node scripts/release-version.mjs qas",
+
     "deploy:qas:force": "nest build && serverless deploy --stage qas",
+    "predeploy:prd:force": "node scripts/release-version.mjs prd",
+
     "deploy:prd:force": "nest build && serverless deploy --stage prd",
+    "predeploy:all:force": "node scripts/release-version.mjs all",
+
     "deploy:all:force": "nest build && serverless deploy --stage qas && serverless deploy --stage prd",
     "generate:layer": "node generate-layer.js"
   },
