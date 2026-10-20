@@ -4,6 +4,7 @@ import { InjectModel } from 'nestjs-dynamoose';
 import { Model } from 'nestjs-dynamoose';
 import { User, UserKey } from 'src/app/schemas/user.schema';
 import { isPlatformCrossBusinessRole } from 'src/app/core/constants/domain.constants';
+import { applyActingRole } from 'src/app/core/auth/utils/acting-role.util';
 import {
   EdgeUserContext,
   extractEdgeUserContext,
@@ -46,6 +47,8 @@ export class AuthGuard implements CanActivate {
     ) {
       userData.idBusiness = edgeUser.idBusiness;
     }
+
+    applyActingRole(userData, edgeUser.actingRole);
 
     (request as any)['user'] = userData;
     return true;

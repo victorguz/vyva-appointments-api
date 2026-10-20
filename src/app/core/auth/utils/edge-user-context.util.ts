@@ -6,6 +6,8 @@ export interface EdgeUserContext {
   role?: string;
   email?: string;
   authType?: 'jwt' | 'apiKey';
+  /** Rol secundario del superadmin («ver como…»); lo aplica el guardián. */
+  actingRole?: string;
 }
 
 export function extractEdgeUserContext(
@@ -117,6 +119,7 @@ export function mapAuthorizerContext(
     role: context.role || undefined,
     email: context.email || undefined,
     authType: context.authType as EdgeUserContext['authType'],
+    actingRole: context.actingRole || undefined,
   };
 }
 
