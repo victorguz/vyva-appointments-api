@@ -7,7 +7,12 @@
  * authorizer pasa en el contexto y cada guardián aplica aquí. Un inicio de sesión
  * nunca emite ese claim, así que siempre se arranca como superadmin.
  */
-export const ACTING_ROLES = ['admin', 'employee', 'supermarketing'] as const;
+export const ACTING_ROLES = [
+  'admin',
+  'employee',
+  'supermarketing',
+  'community_manager',
+] as const;
 
 export type ActingRole = (typeof ACTING_ROLES)[number];
 

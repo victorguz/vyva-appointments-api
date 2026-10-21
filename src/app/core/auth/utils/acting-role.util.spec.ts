@@ -2,7 +2,9 @@ import { actingRoleOf, applyActingRole, isActingRole } from './acting-role.util'
 
 describe('Rol secundario del superadmin', () => {
   it('solo acepta los roles de la lista', () => {
-    expect(['admin', 'employee', 'supermarketing'].every(isActingRole)).toBe(true);
+    expect(
+      ['admin', 'employee', 'supermarketing', 'community_manager'].every(isActingRole),
+    ).toBe(true);
     expect(isActingRole('superadmin')).toBe(false);
     expect(isActingRole('customer')).toBe(false);
     expect(isActingRole(undefined)).toBe(false);
