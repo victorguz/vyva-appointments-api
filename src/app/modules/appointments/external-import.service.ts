@@ -132,15 +132,24 @@ export class ExternalImportService {
       result.created += chunk.length;
     }
 
-    for (const row of toCreate) {
-      void this.realtimePublisher.publishAppointmentChange({
-        idBusiness,
-        action: 'created',
-        appointmentId: row.id,
-        startDate: new Date(row.startDate).toISOString(),
-        endDate: new Date(row.endDate).toISOString(),
-      });
-    }
+    // One parallel wait for all the publishes; the publisher never throws and
+    // caps each call at 2 s, so the whole batch costs at most that.
+    await Promise.allSettled(
+      toCreate.map(async (row) => {
+        try {
+          await this.realtimePublisher.publishAppointmentChange({
+            idBusiness,
+            action: 'created',
+            appointmentId: row.id,
+            startDate: new Date(row.startDate).toISOString(),
+            endDate: new Date(row.endDate).toISOString(),
+            ...(user?.id ? { originUserId: user.id } : {}),
+          });
+        } catch (error) {
+          console.error('[ExternalImportService] Realtime publish failed:', error);
+        }
+      }),
+    );
 
     return new GenericResponse(result);
   }

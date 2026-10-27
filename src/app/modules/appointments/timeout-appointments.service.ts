@@ -56,6 +56,10 @@ export class TimeOutAppointmentsService {
     }
 
     const created: Appointment[] = [];
+    // Realtime publishes start as each block is saved (in parallel with the
+    // next employee's Google sync) and are awaited once, together, at the end.
+    // They never reject, so they cannot fail the batch.
+    const realtimePublishes: Promise<void>[] = [];
     try {
       for (const idEmployee of dto.employeeIds) {
         const payload = deleteEmptyProperties({
@@ -77,6 +81,11 @@ export class TimeOutAppointmentsService {
           throw new Error('MS007');
         }
 
+        // Publish right after saving, before the slow Google Calendar sync.
+        realtimePublishes.push(
+          this.notifyAppointmentChange(saved.toJSON() as Appointment, user.id),
+        );
+
         await this.syncAppointmentToGoogleCalendar(
           saved.toJSON() as Appointment,
           user,
@@ -84,12 +93,14 @@ export class TimeOutAppointmentsService {
 
         const withSync = await this.model.get({ id: payload.id });
         const finalAppointment = (withSync ?? saved).toJSON() as Appointment;
-        this.notifyAppointmentChange(finalAppointment);
         created.push(finalAppointment);
       }
 
+      await Promise.allSettled(realtimePublishes);
       return new GenericResponse(created);
     } catch (error) {
+      // Do not leave publishes dangling past the response (Lambda freeze).
+      await Promise.allSettled(realtimePublishes);
       for (const appointment of created) {
         try {
           await this.model.delete({ id: appointment.id });
@@ -129,15 +140,27 @@ export class TimeOutAppointmentsService {
     }
   }
 
-  private notifyAppointmentChange(appointment: Appointment): void {
-    if (!appointment.idBusiness) return;
-    void this.realtimePublisher.publishAppointmentChange({
-      idBusiness: appointment.idBusiness,
-      action: 'created',
-      appointmentId: appointment.id,
-      startDate: new Date(appointment.startDate).toISOString(),
-      endDate: new Date(appointment.endDate).toISOString(),
-    });
+  /** Best-effort realtime publish; never rejects (the publisher caps at 2 s). */
+  private async notifyAppointmentChange(
+    appointment: Appointment,
+    originUserId?: string,
+  ): Promise<void> {
+    try {
+      if (!appointment?.idBusiness) return;
+      await this.realtimePublisher.publishAppointmentChange({
+        idBusiness: appointment.idBusiness,
+        action: 'created',
+        appointmentId: appointment.id,
+        startDate: new Date(appointment.startDate).toISOString(),
+        endDate: new Date(appointment.endDate).toISOString(),
+        ...(originUserId ? { originUserId } : {}),
+      });
+    } catch (error) {
+      console.error(
+        '[TimeOutAppointmentsService] Realtime publish failed:',
+        error,
+      );
+    }
   }
 
   private validateAppointmentDates(startDate: string, endDate: string): void {

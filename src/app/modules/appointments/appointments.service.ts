@@ -305,6 +305,17 @@ export class AppointmentsService extends TransactionSupport {
         await this.certifyAppointmentsCreated(allPayloads);
       creationCertified = true;
 
+      // Realtime goes out as soon as the creation is certified, before the
+      // (slow, 2-5 s) Google Calendar sync: the frontend re-fetches the list
+      // through the API and does not need Google's ids. It runs in parallel
+      // with the sync/webhooks and is awaited with them at the end, so the
+      // Lambda does not freeze a half-sent request and the extra time is ~0.
+      const realtimeCreated = this.notifyAppointmentChange(
+        'created',
+        certifiedAppointments[0],
+        user?.id,
+      );
+
       // Sync all to Google Calendar
       const syncResult = await this.syncAllToGoogleCalendar(
         certifiedAppointments,
@@ -320,20 +331,22 @@ export class AppointmentsService extends TransactionSupport {
         throw new Error('MS007');
       }
       const parentData = parentWithSync.toJSON() as Appointment;
-      this.notifyAppointmentChange('created', parentData);
 
       // Notify the automations engine only after creation is certified.
       // Booking WhatsApp / next-day reminders are no longer hardcoded here —
       // they are configured as automation rules (event: appointments.create).
-      await Promise.all(
-        persistedAppointments.map((appointmentData) =>
+      // The realtime publish (already in flight) is awaited alongside them;
+      // it never rejects, so it cannot fail the creation.
+      await Promise.all([
+        realtimeCreated,
+        ...persistedAppointments.map((appointmentData) =>
           this.webhookDispatch.dispatch(
             'appointments.create',
             appointmentData as unknown as Record<string, unknown>,
             appointmentData.idBusiness,
           ),
         ),
-      );
+      ]);
 
       // Por si esta persona llegó desde un anuncio de WhatsApp. Solo la
       // primera sesión: una serie es un solo agendamiento.
@@ -709,9 +722,23 @@ export class AppointmentsService extends TransactionSupport {
       const appointmentData = await this.model.get({ id: appointment.id });
       if (isPaymentOnlyUpdate) {
         // Linking a payment must not sync calendars, reschedule reminders, or
-        // emit an appointment-modified notification.
+        // emit an appointment-modified notification. The agenda/payment views
+        // do need the realtime event, though.
+        await this.notifyAppointmentChange(
+          'updated',
+          appointmentData.toJSON() as Appointment,
+          user?.id,
+        );
         return new GenericResponse(appointmentData);
       }
+
+      // Publish right after the save, before the slow Google Calendar sync;
+      // awaited in parallel with the webhook dispatch below.
+      const realtimeUpdated = this.notifyAppointmentChange(
+        'updated',
+        appointmentData.toJSON() as Appointment,
+        user?.id,
+      );
 
       const sendGoogleCalendar = hasCustomerGoogleCalendarEvent(
         previousAppointment.googleCalendarEventId,
@@ -723,12 +750,14 @@ export class AppointmentsService extends TransactionSupport {
       );
       const appointmentWithSync = await this.model.get({ id: appointment.id });
       const updatedData = appointmentWithSync.toJSON() as Appointment;
-      this.notifyAppointmentChange('updated', updatedData);
-      await this.webhookDispatch.dispatch(
-        'appointments.update',
-        updatedData as unknown as Record<string, unknown>,
-        updatedData.idBusiness,
-      );
+      await Promise.all([
+        realtimeUpdated,
+        this.webhookDispatch.dispatch(
+          'appointments.update',
+          updatedData as unknown as Record<string, unknown>,
+          updatedData.idBusiness,
+        ),
+      ]);
       return syncResult.synced
         ? new GenericResponse(appointmentWithSync)
         : new GenericResponse(
@@ -792,6 +821,14 @@ export class AppointmentsService extends TransactionSupport {
 
       const appointmentData = updatedAppointment.toJSON() as Appointment;
 
+      // Publish right after the save, before the Google Calendar sync;
+      // awaited in parallel with the webhook dispatch below.
+      const realtimeUpdated = this.notifyAppointmentChange(
+        'updated',
+        appointmentData,
+        user?.id ?? updateStatusDto.modifiedBy,
+      );
+
       // Only sync to customer calendar if the appointment had a customer event
       const sendGoogleCalendar = hasCustomerGoogleCalendarEvent(
         appointmentData.googleCalendarEventId,
@@ -802,19 +839,21 @@ export class AppointmentsService extends TransactionSupport {
         sendGoogleCalendar,
       );
 
-      this.notifyAppointmentChange('updated', appointmentData);
-      await this.webhookDispatch.dispatch(
-        'appointments.update',
-        appointmentData as unknown as Record<string, unknown>,
-        appointmentData.idBusiness,
-      );
+      await Promise.all([
+        realtimeUpdated,
+        this.webhookDispatch.dispatch(
+          'appointments.update',
+          appointmentData as unknown as Record<string, unknown>,
+          appointmentData.idBusiness,
+        ),
+      ]);
       return new GenericResponse(appointmentData);
     } catch (error) {
       throw error;
     }
   }
 
-  async remove(id: string): Promise<GenericResponse<boolean>> {
+  async remove(id: string, user?: User): Promise<GenericResponse<boolean>> {
     try {
       // Validate id
       if (!id) {
@@ -832,7 +871,11 @@ export class AppointmentsService extends TransactionSupport {
       }
       await this.model.delete({ id });
       if (existing?.idBusiness) {
-        this.notifyAppointmentChange('deleted', existing.toJSON() as Appointment);
+        await this.notifyAppointmentChange(
+          'deleted',
+          existing.toJSON() as Appointment,
+          user?.id,
+        );
       }
       return new GenericResponse(true);
     } catch (error) {
@@ -840,21 +883,33 @@ export class AppointmentsService extends TransactionSupport {
     }
   }
 
-  private notifyAppointmentChange(
+  /**
+   * Best-effort realtime publish. Never rejects: a failing or slow publisher
+   * (the publisher itself caps at 2 s) must not fail the appointment
+   * operation. Callers start it early and await it in parallel with other
+   * work so the Lambda does not freeze a half-sent request.
+   */
+  private async notifyAppointmentChange(
     action: RealtimeAppointmentAction,
     appointment: Appointment,
-  ): void {
-    if (!appointment.idBusiness) {
-      return;
-    }
+    originUserId?: string,
+  ): Promise<void> {
+    try {
+      if (!appointment?.idBusiness) {
+        return;
+      }
 
-    void this.realtimePublisher.publishAppointmentChange({
-      idBusiness: appointment.idBusiness,
-      action,
-      appointmentId: appointment.id,
-      startDate: new Date(appointment.startDate).toISOString(),
-      endDate: new Date(appointment.endDate).toISOString(),
-    });
+      await this.realtimePublisher.publishAppointmentChange({
+        idBusiness: appointment.idBusiness,
+        action,
+        appointmentId: appointment.id,
+        startDate: new Date(appointment.startDate).toISOString(),
+        endDate: new Date(appointment.endDate).toISOString(),
+        ...(originUserId ? { originUserId } : {}),
+      });
+    } catch (error) {
+      console.error('[notifyAppointmentChange] Realtime publish failed:', error);
+    }
   }
 
   private validateAppointmentDates(startDate: string, endDate: string): void {

@@ -8,13 +8,29 @@ export interface RealtimeAppointmentPayload {
   appointmentId: string;
   startDate?: string;
   endDate?: string;
+  /**
+   * Id del usuario que hizo el cambio (si el servicio lo conoce). Sirve al
+   * frontal para no repetir el refresco de quien originó el evento. Solo un
+   * id: nunca datos personales de la clienta.
+   */
+  originUserId?: string;
 }
+
+/** Tope duro de la publicación: el realtime nunca puede frenar una cita. */
+export const REALTIME_PUBLISH_TIMEOUT_MS = 2000;
+/** Por encima de esto se deja un aviso en el log (publicación lenta). */
+export const REALTIME_PUBLISH_SLOW_MS = 500;
 
 @Injectable()
 export class RealtimePublisherService {
   private readonly logger = new Logger(RealtimePublisherService.name);
 
-  /** Best-effort push to vyva-realtime-api (never throws). */
+  /**
+   * Push to vyva-realtime-api. Best-effort: never throws and never takes
+   * longer than {@link REALTIME_PUBLISH_TIMEOUT_MS}. Callers should `await`
+   * it (in parallel with other work) so the Lambda does not freeze a
+   * half-sent request.
+   */
   async publishAppointmentChange(
     payload: RealtimeAppointmentPayload,
   ): Promise<void> {
@@ -32,6 +48,7 @@ export class RealtimePublisherService {
       return;
     }
 
+    const startedAt = Date.now();
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -43,6 +60,7 @@ export class RealtimePublisherService {
           channels: [channel],
           event: { type, data },
         }),
+        signal: AbortSignal.timeout(REALTIME_PUBLISH_TIMEOUT_MS),
       });
 
       if (!res.ok) {
@@ -50,11 +68,21 @@ export class RealtimePublisherService {
         this.logger.warn(
           `Realtime publish failed (${res.status}): ${body.slice(0, 200)}`,
         );
+        return;
+      }
+
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > REALTIME_PUBLISH_SLOW_MS) {
+        this.logger.warn(`Realtime publish slow: ${elapsed} ms`);
       }
     } catch (err) {
-      this.logger.warn(
-        `Realtime publish error: ${err instanceof Error ? err.message : err}`,
-      );
+      const elapsed = Date.now() - startedAt;
+      const e = err as { name?: string; message?: string } | undefined;
+      const reason =
+        e?.name === 'TimeoutError' || e?.name === 'AbortError'
+          ? `timeout after ${REALTIME_PUBLISH_TIMEOUT_MS} ms`
+          : (e?.message ?? String(err));
+      this.logger.warn(`Realtime publish error (${elapsed} ms): ${reason}`);
     }
   }
 }

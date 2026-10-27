@@ -6,6 +6,7 @@ import { User } from 'src/app/schemas/user.schema';
 import { GenericResponse } from '../../core/interfaces/generic-response.interface';
 import { Appointment, AppointmentKey } from '../../schemas/appointment.schema';
 import { LambdaInvokeService } from '../shared/lambda-invoke.service';
+import { RealtimePublisherService } from '../shared/realtime-publisher.service';
 import { WebhookDispatchService } from '../shared/webhook-dispatch.service';
 import { Product, ProductKey } from 'src/app/schemas/product.schema';
 import { Business, BusinessKey } from 'src/app/schemas/business.schema';
@@ -16,6 +17,7 @@ export class AppointmentsCustomerService extends TransactionSupport {
   constructor(
     private readonly lambdaInvokeService: LambdaInvokeService,
     private readonly webhookDispatch: WebhookDispatchService,
+    private readonly realtimePublisher: RealtimePublisherService,
     @InjectModel('Appointment')
     private readonly model: Model<Appointment, AppointmentKey>,
     @InjectModel('Product')
@@ -171,6 +173,14 @@ export class AppointmentsCustomerService extends TransactionSupport {
 
       const appointmentData = updatedAppointment.toJSON() as Appointment;
 
+      // El negocio ve la cancelación en su agenda al instante. Arranca ya y se
+      // espera al final, en paralelo con el aviso a automatizaciones y el
+      // sync de Google, para no sumar tiempo. Nunca rechaza.
+      const realtimeUpdated = this.publishRealtimeUpdate(
+        appointmentData,
+        user.id,
+      );
+
       /*
        * El motor de automatizaciones tiene que enterarse, como en cualquier
        * otro cambio de la cita.
@@ -216,9 +226,31 @@ export class AppointmentsCustomerService extends TransactionSupport {
         );
       }
 
+      await realtimeUpdated;
+
       return new GenericResponse(appointmentData);
     } catch (error) {
       throw error;
+    }
+  }
+
+  /** Best-effort realtime publish; never rejects (the publisher caps at 2 s). */
+  private async publishRealtimeUpdate(
+    appointment: Appointment,
+    originUserId?: string,
+  ): Promise<void> {
+    try {
+      if (!appointment?.idBusiness) return;
+      await this.realtimePublisher.publishAppointmentChange({
+        idBusiness: appointment.idBusiness,
+        action: 'updated',
+        appointmentId: appointment.id,
+        startDate: new Date(appointment.startDate).toISOString(),
+        endDate: new Date(appointment.endDate).toISOString(),
+        ...(originUserId ? { originUserId } : {}),
+      });
+    } catch (error) {
+      console.error('[cancelAppointment] Realtime publish failed:', error);
     }
   }
 }
