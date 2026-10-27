@@ -1,6 +1,6 @@
 {
   "name": "vyva-appointments",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Vyva Appointments API - Serverless module for appointment management",
   "author": "",
   "private": true,
