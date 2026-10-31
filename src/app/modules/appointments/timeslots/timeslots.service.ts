@@ -190,7 +190,7 @@ export class TimeslotsService {
       const schedule = this.buildScheduleConfig(domainValues, serviceMinutes);
       if (schedule.closedOnHolidays && this.holidays) {
         schedule.closedDates = await this.holidays.officialDates(
-          businessId,
+          { ...activeEmployees[0], idBusiness: businessId } as User,
           this.toClientDateKey(this.clientDayStartUtc(startUtc, 0, offset), offset),
           this.toClientDateKey(this.clientDayStartUtc(startUtc, safeDays - 1, offset), offset),
         );

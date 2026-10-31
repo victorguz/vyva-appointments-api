@@ -90,7 +90,11 @@ describe('TimeslotsService - festivos oficiales', () => {
 
     await horasPorDia();
 
-    expect(holidays.officialDates).toHaveBeenCalledWith(businessId, '2026-11-01', '2026-11-03');
+    expect(holidays.officialDates).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'emp-1', idBusiness: businessId }),
+      '2026-11-01',
+      '2026-11-03',
+    );
   });
 
   it('sin el interruptor ofrece horas el festivo y ni siquiera pregunta por festivos', async () => {

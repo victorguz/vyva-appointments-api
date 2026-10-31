@@ -32,8 +32,15 @@ export class OfficialHolidaysService {
 
   constructor(private readonly lambdaInvoke: LambdaInvokeService) {}
 
-  /** Las fechas locales (`YYYY-MM-DD`) de festivo oficial entre `from` y `to`, ambas incluidas. */
-  async officialDates(idBusiness: string, from: string, to: string): Promise<Set<string>> {
+  /**
+   * Las fechas locales (`YYYY-MM-DD`) de festivo oficial entre `from` y `to`, ambas incluidas.
+   *
+   * `user` es un usuario REAL del negocio (por ejemplo, uno de sus empleados activos): el servicio de integraciones
+   * relee al usuario en su tabla y rechaza (MS019) a uno que no exista. La consulta de horas libres es pública y no
+   * trae usuario, así que la agenda pasa uno del negocio.
+   */
+  async officialDates(user: User, from: string, to: string): Promise<Set<string>> {
+    const idBusiness = user.idBusiness as string;
     const key = `${idBusiness}|${from}|${to}`;
     const cached = this.cache.get(key);
     if (cached && Date.now() - cached.at < cached.ttl) return cached.dates;
@@ -46,7 +53,7 @@ export class OfficialHolidaysService {
         'GET',
         '/api/integrations/google-calendar/holidays',
         undefined,
-        { id: 'agenda', idBusiness, role: 'admin' } as unknown as User,
+        user,
         { from, to },
       );
       const holidays = (response?.data?.holidays ?? []) as Array<{ date?: string; kind?: string }>;
