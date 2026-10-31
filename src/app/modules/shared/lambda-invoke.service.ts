@@ -28,6 +28,7 @@ export class LambdaInvokeService {
     path: string,
     body: any,
     user: User,
+    query?: Record<string, string>,
   ): Promise<any> {
     try {
       const stage = this.configService.get<string>('NODE_ENV') || 'qas';
@@ -49,14 +50,14 @@ export class LambdaInvokeService {
           'x-vyva-user': edgeUserContext,
         },
         multiValueHeaders: {} as Record<string, string[]>,
-        queryStringParameters: {} as Record<string, string>,
+        queryStringParameters: (query ?? {}) as Record<string, string>,
         multiValueQueryStringParameters: null as null,
         pathParameters: null as null,
         stageVariables: null as null,
         requestContext: {} as any,
         resource: '',
         isBase64Encoded: false,
-        body: JSON.stringify(body),
+        body: body === undefined ? undefined : JSON.stringify(body),
       };
 
       const command = new InvokeCommand({

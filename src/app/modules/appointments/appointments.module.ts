@@ -10,6 +10,7 @@ import {
   TimeslotsController,
   PublicTimeslotsController,
 } from './timeslots/timeslots.controller';
+import { OfficialHolidaysService } from './timeslots/official-holidays.service';
 import { TimeslotsService } from './timeslots/timeslots.service';
 import { BusinessSchema } from 'src/app/schemas/business.schema';
 import { AppointmentsCustomerService } from './appointments-customer.service';
@@ -105,6 +106,7 @@ import { AuthGuard } from 'src/app/core/auth/guards/auth.guard';
     AppointmentsService,
     UsersService,
     TimeslotsService,
+    OfficialHolidaysService,
     AppointmentsCustomerService,
     TimeOutAppointmentsService,
     ExternalImportService,

@@ -1,6 +1,6 @@
 import { AVAILABLE_APPOINTMENT_STATUSES_TO_GENERATE_TIMESLOTS } from './../../../core/constants/generic.constants';
 import { AppointmentStatus } from '../../../core/constants/domain.constants';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectModel, Model } from 'nestjs-dynamoose';
 import * as moment from 'moment-timezone';
 
@@ -15,6 +15,7 @@ import { User, UserKey } from '../../../schemas/user.schema';
 import { UsersService } from '../../users/users.service';
 import { AvailableTimeSlot, GetTimeslotsQueryDto } from './dto/timeslots.dto';
 import { isEmpty } from 'class-validator';
+import { OfficialHolidaysService } from './official-holidays.service';
 
 /** Precomputed appointment window for fast conflict checks (no moment per comparison). */
 interface BlockedInterval {
@@ -88,6 +89,10 @@ interface BusinessScheduleConfig {
    */
   marginMinutes: number;
   activeTime: ActiveTimeConfig;
+  /** El negocio no atiende en los festivos oficiales de su país. */
+  closedOnHolidays: boolean;
+  /** Fechas locales (`YYYY-MM-DD`) cerradas por festivo en el rango consultado; la llena `getAvailableTimeslots`. */
+  closedDates: Set<string>;
   lunchBreak: LunchBreakConfig | null;
   recurringTimeOuts: RecurringTimeOutEvent[];
 }
@@ -133,6 +138,8 @@ export class TimeslotsService {
     private readonly productModel: Model<Product, ProductKey>,
     @InjectModel('Domain')
     private readonly domainModel: Model<Domain, DomainKey>,
+    /** Festivos oficiales del país del negocio. Opcional: sin él la agenda no cierra festivos. */
+    @Optional() private readonly holidays?: OfficialHolidaysService,
   ) {}
 
   /**
@@ -181,6 +188,13 @@ export class TimeslotsService {
         ...services.map((service) => Number(service.measure) || 60),
       );
       const schedule = this.buildScheduleConfig(domainValues, serviceMinutes);
+      if (schedule.closedOnHolidays && this.holidays) {
+        schedule.closedDates = await this.holidays.officialDates(
+          businessId,
+          this.toClientDateKey(this.clientDayStartUtc(startUtc, 0, offset), offset),
+          this.toClientDateKey(this.clientDayStartUtc(startUtc, safeDays - 1, offset), offset),
+        );
+      }
       const appointments = await this.getAppointments(
         businessId,
         startUtc,
@@ -427,13 +441,25 @@ export class TimeslotsService {
   private parseActiveTimeConfig(raw: string | null): ActiveTimeConfig {
     if (!raw) return this.getDefaultActiveTime();
     try {
-      const parsed = JSON.parse(raw) as ActiveTimeConfig;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
       if (!parsed || typeof parsed !== 'object') {
         return this.getDefaultActiveTime();
       }
-      return parsed;
+      // `closedOnHolidays` vive en el mismo JSON pero no es un día de la semana.
+      const { closedOnHolidays: _flag, ...days } = parsed;
+      return days as unknown as ActiveTimeConfig;
     } catch {
       return this.getDefaultActiveTime();
+    }
+  }
+
+  /** ¿El negocio pidió no atender en festivos oficiales? (`closedOnHolidays: true` en su `activeTime`). */
+  private parseClosedOnHolidays(raw: string | null): boolean {
+    if (!raw) return false;
+    try {
+      return (JSON.parse(raw) as { closedOnHolidays?: unknown })?.closedOnHolidays === true;
+    } catch {
+      return false;
     }
   }
 
@@ -466,6 +492,8 @@ export class TimeslotsService {
       serviceMinutes,
       marginMinutes: appointmentTimes.splitTime,
       activeTime: this.parseActiveTimeConfig(domainValues.get('activeTime') ?? null),
+      closedOnHolidays: this.parseClosedOnHolidays(domainValues.get('activeTime') ?? null),
+      closedDates: new Set<string>(),
       lunchBreak: this.parseLunchBreakConfig(domainValues.get('lunchBreak') ?? null),
       recurringTimeOuts: this.parseRecurringTimeOuts(
         domainValues.get('recurringTimeOuts') ?? null,
@@ -868,6 +896,10 @@ export class TimeslotsService {
       const daySchedule = schedule.activeTime[weekdayKey];
 
       if (!daySchedule?.startTime || !daySchedule?.endTime) {
+        continue;
+      }
+      // Festivo oficial y el negocio no atiende esos días: no se ofrece ninguna hora.
+      if (schedule.closedDates.has(dateKey)) {
         continue;
       }
 
